@@ -2,6 +2,7 @@
 
 IRrecv irrecv(7); 
 decode_results gIRResults;
+#define BUZZER_PIN 12
 
 #define REMOTE_UNKNOWN -1
 #define REMOTE_0 0
@@ -23,10 +24,17 @@ decode_results gIRResults;
 #define REMOTE_DOWN 15
 #define REMOTE_OK 16
 
+void buzzer(int pCzas=1){
+  digitalWrite(BUZZER_PIN,HIGH);
+  delay(pCzas);
+  digitalWrite(BUZZER_PIN,LOW);
+}
+
 void setup()
 {
    Serial.begin(9600);
-Serial.print("Start!");       
+   Serial.print("Start!");       
+   pinMode(BUZZER_PIN,OUTPUT);//initialize the buzzer pin as an output
    irrecv.enableIRIn(); // uruchamia odbiornik podczerwieni
 }
 
@@ -93,7 +101,10 @@ int remoteDecode()
                 break;
         }
     }
-    
+
+    if(vResult!=REMOTE_UNKNOWN){
+      buzzer(1);
+    }
     return vResult;
 }
 

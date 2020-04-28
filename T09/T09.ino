@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <TinyMPU6050.h>
 #include <TM1637Display.h>
+#include "RTClib.h"
 
 #define CLK1 2
 #define DIO1 3
@@ -35,7 +36,8 @@ const uint8_t napis_HI[] = {
 
 TM1637Display display1 = TM1637Display(CLK1, DIO1);
 TM1637Display display2 = TM1637Display(CLK2, DIO2);
-MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH);
+MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
+RTC_DS1307 rtc;
 
 /*
  *  Setup
@@ -44,7 +46,14 @@ void setup() {
  int i;
   // Initialization
   mpu.Initialize();
-
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+  if (! rtc.isrunning()) {
+    Serial.println("RTC is NOT running!");
+  }  
+  
   // Calibration
   Serial.begin(9600);
   display1.clear();
@@ -79,6 +88,21 @@ void setup() {
  *  Loop
  */
 void loop() {
+  DateTime now = rtc.now();
+
+  Serial.print(now.year(), DEC);
+  Serial.print('/');
+  Serial.print(now.month(), DEC);
+  Serial.print('/');
+  Serial.print(now.day(), DEC);  
+  Serial.print(" (");  
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.println();  
+  
   mpu.Execute();
   Serial.print("AngX = ");
   Serial.print(mpu.GetAngX());

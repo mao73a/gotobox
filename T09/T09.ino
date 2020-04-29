@@ -5,11 +5,14 @@
 #include <TinyMPU6050.h>
 #include <TM1637Display.h>
 #include "RTClib.h"
+#include "remote_decode.h"
 
-#define CLK1 2
-#define DIO1 3
-#define CLK2 4
-#define DIO2 5
+#define DISPLAY1_CLK 2
+#define DISPLAY1_DIO 3
+#define DISPLAY2_CLK 4
+#define DISPLAY2_DIO 5
+#define BUZZER_PIN 12
+#define IRREC_PIN 7
 
 //
 //      A
@@ -34,14 +37,58 @@ const uint8_t napis_HI[] = {
   0
 };
 
-TM1637Display display1 = TM1637Display(CLK1, DIO1);
-TM1637Display display2 = TM1637Display(CLK2, DIO2);
+TM1637Display display1 = TM1637Display(DISPLAY1_CLK, DISPLAY1_DIO);
+TM1637Display display2 = TM1637Display(DISPLAY2_CLK, DISPLAY2_DIO);
 MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
 RTC_DS1307 rtc;
+IRrecv irrecv(IRREC_PIN); 
 
-/*
- *  Setup
- */
+
+void buzzer(int pCzas=1){
+  digitalWrite(BUZZER_PIN,HIGH);
+  delay(pCzas);
+  digitalWrite(BUZZER_PIN,LOW);
+}
+
+void remoteServe(int pKey)
+{
+ //Serial.print(" remoteServe");   
+ //Serial.println(pKey); 
+    if(pKey!=REMOTE_UNKNOWN){
+      buzzer(1);
+    } 
+    if (pKey>=0 && pKey<=9){
+        Serial.print(pKey); 
+        Serial.print(" "); 
+    }
+    else if (pKey==REMOTE_LEFT){
+        Serial.print("Left "); 
+    }
+    else if (pKey==REMOTE_RIGHT){
+        Serial.print("Right "); 
+    }
+    else if (pKey==REMOTE_UP){
+        Serial.print("Up "); 
+    }
+    else if (pKey==REMOTE_DOWN){
+        Serial.print("Down "); 
+    }    
+    else if (pKey==REMOTE_ASTER){
+        Serial.print("* "); 
+    }  
+    else if (pKey==REMOTE_HASH){
+        Serial.print("# "); 
+    }      
+    else if (pKey==REMOTE_OK){
+        Serial.println("Enter "); 
+    }          
+    else {
+        //Serial.println("UNKNOWN"); 
+    }
+}
+
+
+
 void setup() {
  int i;
   // Initialization
@@ -53,6 +100,9 @@ void setup() {
   if (! rtc.isrunning()) {
     Serial.println("RTC is NOT running!");
   }  
+  
+  pinMode(BUZZER_PIN,OUTPUT);//initialize the buzzer pin as an output
+  irrecv.enableIRIn(); // uruchamia odbiornik podczerwieni
   
   // Calibration
   Serial.begin(9600);
@@ -88,8 +138,15 @@ void setup() {
  *  Loop
  */
 void loop() {
+  decode_results vIRResults;
   DateTime now = rtc.now();
 
+  if (irrecv.decode(&vIRResults))
+  { 
+        remoteServe(remoteDecode(vIRResults));
+        irrecv.resume();
+        delay(100);
+  }
   Serial.print(now.year(), DEC);
   Serial.print('/');
   Serial.print(now.month(), DEC);

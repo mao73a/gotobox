@@ -13,6 +13,10 @@
 #define DISPLAY2_DIO 5
 #define BUZZER_PIN 12
 #define IRREC_PIN 7
+#define DIODE_PIN 6
+
+
+
 
 //
 //      A
@@ -43,49 +47,107 @@ MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
 RTC_DS1307 rtc;
 IRrecv irrecv(IRREC_PIN); 
 
-
 void buzzer(int pCzas=1){
   digitalWrite(BUZZER_PIN,HIGH);
   delay(pCzas);
   digitalWrite(BUZZER_PIN,LOW);
 }
 
-void remoteServe(int pKey)
-{
- //Serial.print(" remoteServe");   
- //Serial.println(pKey); 
-    if(pKey!=REMOTE_UNKNOWN){
-      buzzer(1);
-    } 
-    if (pKey>=0 && pKey<=9){
-        Serial.print(pKey); 
-        Serial.print(" "); 
+class GyroState {
+  private:
+    boolean fFreeze;
+    float fGyroX, fGyroY;//input gyro angles
+    float fAzOffsetX=0, fAzOffsetY=0;//output azimuthal angles
+  public:
+    unsigned long lastPrint=0;  
+    boolean getFreeze(){
+      return fFreeze;
     }
-    else if (pKey==REMOTE_LEFT){
-        Serial.print("Left "); 
+    void setFreezeOnOff(){
+      fFreeze=!fFreeze;
+      digitalWrite(DIODE_PIN, fFreeze);         
     }
-    else if (pKey==REMOTE_RIGHT){
-        Serial.print("Right "); 
+    void setGyroCoord(float pX, float pY){
+      if(!fFreeze){
+        fGyroX=pX;
+        fGyroY=pY;
+      }
     }
-    else if (pKey==REMOTE_UP){
-        Serial.print("Up "); 
+    void setAzCoord(float pX, float pY){
+        fAzOffsetX=pX-fGyroX;
+        fAzOffsetY=pY-fGyroY;
     }
-    else if (pKey==REMOTE_DOWN){
-        Serial.print("Down "); 
+    void setAzCoordByIncrement(float pX, float pY){
+        fAzOffsetX+=pX;
+        fAzOffsetY+=pY;
+    }
+    float makeNumber360(float pNum){
+        float newPos=pNum;
+        while(newPos<0.0){
+          newPos+=3600.0;
+        }
+        while(newPos>=3600.0){
+          newPos-=3600.0;
+        }      
+        return newPos;    
+    }
+    float getAzCoordX(){
+        return makeNumber360(fGyroX+fAzOffsetX);
+    }
+    
+    float getAzCoordY(){
+        return fGyroY+fAzOffsetY;
     }    
-    else if (pKey==REMOTE_ASTER){
-        Serial.print("* "); 
-    }  
-    else if (pKey==REMOTE_HASH){
-        Serial.print("# "); 
-    }      
-    else if (pKey==REMOTE_OK){
-        Serial.println("Enter "); 
-    }          
-    else {
-        //Serial.println("UNKNOWN"); 
-    }
-}
+};
+static GyroState gGyroState;
+
+class NavigationState{
+  
+    public:  
+        void remoteServe(int pKey)
+        {
+         //Serial.print(" remoteServe");   
+         //Serial.println(pKey); 
+            if(pKey!=REMOTE_UNKNOWN){
+              buzzer(1);
+            } 
+            if (pKey>=0 && pKey<=9){
+                Serial.print(pKey); 
+                Serial.print(" "); 
+            }
+            else if (pKey==REMOTE_LEFT){
+                Serial.print("Left "); 
+                gGyroState.setAzCoordByIncrement(-1,0);
+            }
+            else if (pKey==REMOTE_RIGHT){
+                Serial.print("Right "); 
+                gGyroState.setAzCoordByIncrement(+1,0);
+            }
+            else if (pKey==REMOTE_UP){
+                Serial.print("Up "); 
+                gGyroState.setAzCoordByIncrement(0,+1);
+            }
+            else if (pKey==REMOTE_DOWN){
+                Serial.print("Down "); 
+                gGyroState.setAzCoordByIncrement(0,-1);
+            }    
+            else if (pKey==REMOTE_ASTER){
+                Serial.print("* ");
+                gGyroState.setFreezeOnOff();
+            }  
+            else if (pKey==REMOTE_HASH){
+                Serial.print("# "); 
+            }      
+            else if (pKey==REMOTE_OK){
+                Serial.println("Enter "); 
+            }          
+            else {
+                //Serial.println("UNKNOWN"); 
+            }
+        }
+};
+
+static NavigationState gNavigationState;
 
 
 
@@ -103,6 +165,7 @@ void setup() {
   
   pinMode(BUZZER_PIN,OUTPUT);//initialize the buzzer pin as an output
   irrecv.enableIRIn(); // uruchamia odbiornik podczerwieni
+  pinMode(DIODE_PIN, OUTPUT);//czerwona dioda freeze
   
   // Calibration
   Serial.begin(9600);
@@ -111,10 +174,11 @@ void setup() {
   display1.setBrightness(7);
   display2.setBrightness(7);  
   display2.setSegments(napis_HI);
-  for(i=5;i>=0;i--){
+  for(i=1;i>=0;i--){
    display1.showNumberDec(i);
    delay(1000);
   }
+  /*
   display1.clear();
   display2.clear();    
   display1.setSegments(napis_CAL);
@@ -130,45 +194,55 @@ void setup() {
   Serial.println(mpu.GetGyroYOffset());
   Serial.print("GyroZ Offset = ");
   Serial.println(mpu.GetGyroZOffset());
+  */
+  
+  mpu.SetGyroOffsets(-327.04, 109.60, -76.95);
   display1.clear();
   display2.clear();
+  gGyroState.setAzCoord(0,0);
 }
 
-/*
- *  Loop
- */
+
+
 void loop() {
   decode_results vIRResults;
-  DateTime now = rtc.now();
+  DateTime now;
+
 
   if (irrecv.decode(&vIRResults))
   { 
-        remoteServe(remoteDecode(vIRResults));
+        gNavigationState.remoteServe(remoteDecode(vIRResults));
         irrecv.resume();
         delay(100);
   }
-  Serial.print(now.year(), DEC);
-  Serial.print('/');
-  Serial.print(now.month(), DEC);
-  Serial.print('/');
-  Serial.print(now.day(), DEC);  
-  Serial.print(" (");  
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  Serial.println();  
-  
-  mpu.Execute();
-  Serial.print("AngX = ");
-  Serial.print(mpu.GetAngX());
-  Serial.print("  /  AngY = ");
-  Serial.print(mpu.GetAngY());
-  Serial.print("  /  AngZ = ");
-  Serial.println(mpu.GetAngZ());
-  display1.showNumberDec(mpu.GetAngX()*10, true, 4, 0); 
-  //display1.showNumberDec(mpu.GetAngX()*10);
-  display2.showNumberDec(-mpu.GetAngZ()*10, true, 4, 0); 
-  //display2.showNumberDec(-mpu.GetAngZ()*10); 
+  mpu.Execute();  
+  gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);
+  display1.showNumberDec(gGyroState.getAzCoordY(), true, 4, 0); 
+  display2.showNumberDec(gGyroState.getAzCoordX(), true, 4, 0);        
+  if ((millis()-gGyroState.lastPrint)>1000){
+      gGyroState.lastPrint=millis();      
+      now = rtc.now();
+      Serial.print(now.year(), DEC);
+      Serial.print('/');
+      Serial.print(now.month(), DEC);
+      Serial.print('/');
+      Serial.print(now.day(), DEC);  
+      Serial.print(" ");  
+      Serial.print(now.hour(), DEC);
+      Serial.print(':');
+      Serial.print(now.minute(), DEC);
+      Serial.print(':');
+      Serial.print(now.second(), DEC);
+      Serial.println();  
+      
+
+      Serial.print("AngX = ");
+      Serial.print(mpu.GetAngX());
+      Serial.print("  /  AngY = ");
+      Serial.print(mpu.GetAngY());
+      Serial.print("  /  AngZ = ");
+      Serial.println(mpu.GetAngZ());
+
+  }
+ 
 }

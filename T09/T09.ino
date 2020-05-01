@@ -40,12 +40,18 @@ const uint8_t napis_HI[] = {
   0,
   0
 };
+const uint8_t napis_Cor[] = {
+  SEG_A | SEG_D | SEG_E | SEG_F ,           // C
+  SEG_C | SEG_D | SEG_E |  SEG_G,   // o
+  SEG_E | SEG_G,   // r,
+  0
+};
 
 TM1637Display display1 = TM1637Display(DISPLAY1_CLK, DISPLAY1_DIO);
 TM1637Display display2 = TM1637Display(DISPLAY2_CLK, DISPLAY2_DIO);
 MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
 RTC_DS1307 rtc;
-IRrecv irrecv(IRREC_PIN); 
+IRrecv irrecv(IRREC_PIN);
 
 void buzzer(int pCzas=1){
   digitalWrite(BUZZER_PIN,HIGH);
@@ -56,21 +62,52 @@ void buzzer(int pCzas=1){
 class GyroState {
   private:
     boolean fFreeze;
-    float fGyroX, fGyroY;//input gyro angles
+    unsigned long fFreezeTime=0;
+    unsigned long fDriftPerMinuteTime=0;
+    float fGyroX, fGyroY, fFreezedGyroX;//input gyro angles
     float fAzOffsetX=0, fAzOffsetY=0;//output azimuthal angles
+    float fDriftPerMinute=0, fCumulativePrevDrift=0;
   public:
-    unsigned long lastPrint=0;  
+    unsigned long lastPrint=0;
     boolean getFreeze(){
       return fFreeze;
     }
-    void setFreezeOnOff(){
-      fFreeze=!fFreeze;
-      digitalWrite(DIODE_PIN, fFreeze);         
+
+    void setFreezeOn(){
+      fFreeze=true;
+      digitalWrite(DIODE_PIN, fFreeze);
+      fFreezeTime=millis();
+      if (fDriftPerMinuteTime>0){
+        fCumulativePrevDrift+=(millis()-fDriftPerMinuteTime)*fDriftPerMinute/60000.0;
+      }
     }
+    float calculateFreezeTimeDriftPerMinute(){
+      unsigned long vFreezeSpan=0;    
+      float vDriftPerMinute=0.0;
+      vFreezeSpan=millis()-fFreezeTime;
+      if(vFreezeSpan>0){
+         vDriftPerMinute=((fFreezedGyroX-fGyroX)*60000.0)/vFreezeSpan; //per minute
+      }
+      return vDriftPerMinute;
+    }
+    void setDriftPerMinute(float pN){
+        fDriftPerMinute=pN;
+        fDriftPerMinuteTime=millis();
+        Serial.print("Drift set to ");
+        Serial.print(pN);        
+        Serial.println(" per minute!!!!!!!!!!!!!!!!");        
+    }
+    void setFreezeOff(){
+      fFreeze=false;
+      digitalWrite(DIODE_PIN, fFreeze);
+    }
+
     void setGyroCoord(float pX, float pY){
       if(!fFreeze){
         fGyroX=pX;
         fGyroY=pY;
+      } else {
+        fFreezedGyroX=pX;  
       }
     }
     void setAzCoord(float pX, float pY){
@@ -88,63 +125,146 @@ class GyroState {
         }
         while(newPos>=3600.0){
           newPos-=3600.0;
-        }      
-        return newPos;    
+        }
+        return newPos;
     }
     float getAzCoordX(){
-        return makeNumber360(fGyroX+fAzOffsetX);
+        float vX=fGyroX+fAzOffsetX-fCumulativePrevDrift;
+        Serial.print(" mialo byc "); 
+        Serial.println(vX);         
+
+        if (fDriftPerMinuteTime>0){
+            vX-= (millis()-fDriftPerMinuteTime)*fDriftPerMinute/60000.0;
+        }
+
+        Serial.print(" jest "); 
+        Serial.println(makeNumber360(vX));         
+        Serial.println(fDriftPerMinuteTime);          
+        Serial.println(fCumulativePrevDrift     );                  
+        Serial.println(fAzOffsetX     );                          
+        
+   
+       
+        return makeNumber360(vX);
     }
-    
+
     float getAzCoordY(){
         return fGyroY+fAzOffsetY;
-    }    
+    }
 };
 static GyroState gGyroState;
 
+enum Tmenustate{home, freeze,freeze_question, pos_set, calibration, time_set, local_sid_time, longitude};
 class NavigationState{
-  
-    public:  
+
+    private:
+        boolean fAllowDisplayGyro=true;
+        float vCalculatedDrift;        
+    public:
+        Tmenustate fMenuState=home;
+        int fBrightness=3;
+        boolean allowDisplayGyro(){
+            return fAllowDisplayGyro;
+        }
         void remoteServe(int pKey)
         {
-         //Serial.print(" remoteServe");   
-         //Serial.println(pKey); 
+         //Serial.print(" remoteServe");
+         //Serial.println(pKey);
+
             if(pKey!=REMOTE_UNKNOWN){
               buzzer(1);
-            } 
+            }
+
+            switch (fMenuState){
+                case home:
+                    if (pKey==REMOTE_ASTER){
+                        fMenuState=freeze;
+                        gGyroState.setFreezeOn();
+                        fAllowDisplayGyro=false;
+                    } else if (pKey==REMOTE_UP){
+                        fBrightness=constrain(fBrightness+1,0,3);
+                    } else if (pKey==REMOTE_DOWN){
+                        fBrightness=constrain(fBrightness-1,0,3);
+                    } else if (pKey==REMOTE_HASH){
+                      display1.setSegments(napis_CAL);
+                      display2.setSegments(napis_CAL);
+                      mpu.Calibrate();
+                    }
+                    display1.setBrightness(fBrightness);
+                    display2.setBrightness(fBrightness);                    
+                    delay(200);
+                    break;
+
+                case freeze:
+                    if (pKey==REMOTE_ASTER){
+                        display2.setSegments(napis_Cor);
+                        fMenuState=freeze_question;
+                        vCalculatedDrift=gGyroState.calculateFreezeTimeDriftPerMinute();
+                        fAllowDisplayGyro=false;  
+                        display1.clear();
+                        display2.clear();
+                        display2.setSegments(napis_Cor);                    
+                        display1.showNumberDec(round(vCalculatedDrift), false, 4, 0);
+                        delay(1000);                        
+                    } else if (pKey==REMOTE_UP){
+                        fBrightness=constrain(fBrightness+1,0,3);
+                    } else if (pKey==REMOTE_DOWN){
+                        fBrightness=constrain(fBrightness-1,0,3);
+                    }
+                    display1.setBrightness(fBrightness);
+                    display2.setBrightness(fBrightness);
+                    delay(200);
+                    break;
+                case freeze_question:         
+                    if (pKey==REMOTE_OK){
+                        gGyroState.setDriftPerMinute(vCalculatedDrift);
+                    } else {}
+                    gGyroState.setFreezeOff();
+                    fAllowDisplayGyro=true;
+                    fMenuState=home;
+                    delay(200);
+                    
+                    break;                        
+            }
+
+
             if (pKey>=0 && pKey<=9){
-                Serial.print(pKey); 
-                Serial.print(" "); 
+                Serial.print(pKey);
+                Serial.print(" ");
             }
             else if (pKey==REMOTE_LEFT){
-                Serial.print("Left "); 
+                Serial.print("Left ");
                 gGyroState.setAzCoordByIncrement(-1,0);
             }
             else if (pKey==REMOTE_RIGHT){
-                Serial.print("Right "); 
+                Serial.print("Right ");
                 gGyroState.setAzCoordByIncrement(+1,0);
             }
             else if (pKey==REMOTE_UP){
-                Serial.print("Up "); 
+                Serial.print("Up ");
                 gGyroState.setAzCoordByIncrement(0,+1);
             }
             else if (pKey==REMOTE_DOWN){
-                Serial.print("Down "); 
+                Serial.print("Down ");
                 gGyroState.setAzCoordByIncrement(0,-1);
-            }    
+            }
             else if (pKey==REMOTE_ASTER){
                 Serial.print("* ");
-                gGyroState.setFreezeOnOff();
-            }  
+
+            }
             else if (pKey==REMOTE_HASH){
-                Serial.print("# "); 
-            }      
+                Serial.print("# ");
+            }
             else if (pKey==REMOTE_OK){
-                Serial.println("Enter "); 
-            }          
+                Serial.println("Enter ");
+        Serial.print("brightnes=");
+        Serial.println(fBrightness);                  
+            }
             else {
-                //Serial.println("UNKNOWN"); 
+                //Serial.println("UNKNOWN");
             }
         }
+      
 };
 
 static NavigationState gNavigationState;
@@ -161,28 +281,29 @@ void setup() {
   }
   if (! rtc.isrunning()) {
     Serial.println("RTC is NOT running!");
-  }  
-  
+  }
+
   pinMode(BUZZER_PIN,OUTPUT);//initialize the buzzer pin as an output
   irrecv.enableIRIn(); // uruchamia odbiornik podczerwieni
   pinMode(DIODE_PIN, OUTPUT);//czerwona dioda freeze
-  
+
   // Calibration
   Serial.begin(9600);
   display1.clear();
-  display2.clear();  
+  display2.clear();
   display1.setBrightness(7);
-  display2.setBrightness(7);  
+  display2.setBrightness(7);
   display2.setSegments(napis_HI);
   for(i=1;i>=0;i--){
    display1.showNumberDec(i);
    delay(1000);
   }
+
   /*
   display1.clear();
-  display2.clear();    
+  display2.clear();
   display1.setSegments(napis_CAL);
-  display2.setSegments(napis_CAL);  
+  display2.setSegments(napis_CAL);
   Serial.println("=====================================");
   Serial.println("Starting calibration...");
   mpu.Calibrate();
@@ -195,7 +316,7 @@ void setup() {
   Serial.print("GyroZ Offset = ");
   Serial.println(mpu.GetGyroZOffset());
   */
-  
+
   mpu.SetGyroOffsets(-327.04, 109.60, -76.95);
   display1.clear();
   display2.clear();
@@ -208,33 +329,34 @@ void loop() {
   decode_results vIRResults;
   DateTime now;
 
-
   if (irrecv.decode(&vIRResults))
-  { 
+  {
         gNavigationState.remoteServe(remoteDecode(vIRResults));
         irrecv.resume();
         delay(100);
   }
-  mpu.Execute();  
+  mpu.Execute();
   gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);
-  display1.showNumberDec(gGyroState.getAzCoordY(), true, 4, 0); 
-  display2.showNumberDec(gGyroState.getAzCoordX(), true, 4, 0);        
+  if (gNavigationState.allowDisplayGyro()){
+      display1.showNumberDec(gGyroState.getAzCoordY(), true, 4, 0);
+      display2.showNumberDec(gGyroState.getAzCoordX(), true, 4, 0);
+  }
   if ((millis()-gGyroState.lastPrint)>1000){
-      gGyroState.lastPrint=millis();      
+      gGyroState.lastPrint=millis();
       now = rtc.now();
       Serial.print(now.year(), DEC);
       Serial.print('/');
       Serial.print(now.month(), DEC);
       Serial.print('/');
-      Serial.print(now.day(), DEC);  
-      Serial.print(" ");  
+      Serial.print(now.day(), DEC);
+      Serial.print(" ");
       Serial.print(now.hour(), DEC);
       Serial.print(':');
       Serial.print(now.minute(), DEC);
       Serial.print(':');
       Serial.print(now.second(), DEC);
-      Serial.println();  
-      
+      Serial.println();
+
 
       Serial.print("AngX = ");
       Serial.print(mpu.GetAngX());
@@ -244,5 +366,5 @@ void loop() {
       Serial.println(mpu.GetAngZ());
 
   }
- 
+
 }

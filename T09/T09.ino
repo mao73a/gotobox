@@ -15,8 +15,9 @@
 #define IRREC_PIN 7
 #define DIODE_PIN 6
 
-#define LEADING_ZERO 0
+#define LEADING_ZERO 1
 
+#define NUMERIC_ERROR 0x7FFF
 
 //
 //      A
@@ -69,7 +70,7 @@ float makeNumber360(float pNum){
     }
     return newPos;
 }
-    
+
 class GyroState {
   private:
     boolean fFreeze;
@@ -93,7 +94,7 @@ class GyroState {
       }
     }
     float calculateFreezeTimeDriftPerMinute(){
-      unsigned long vFreezeSpan=0;    
+      unsigned long vFreezeSpan=0;
       float vDriftPerMinute=0.0;
       vFreezeSpan=millis()-fFreezeTime;
       if(vFreezeSpan>0){
@@ -105,8 +106,8 @@ class GyroState {
         fDriftPerMinute=pN;
         fDriftPerMinuteTime=millis();
         Serial.print("Drift set to ");
-        Serial.print(pN);        
-        Serial.println(" per minute!!!!!!!!!!!!!!!!");        
+        Serial.print(pN);
+        Serial.println(" per minute!!!!!!!!!!!!!!!!");
     }
     void setFreezeOff(){
       fFreeze=false;
@@ -118,7 +119,7 @@ class GyroState {
         fGyroX=pX;
         fGyroY=pY;
       } else {
-        fFreezedGyroX=pX;  
+        fFreezedGyroX=pX;
       }
     }
     void setAzCoord(float pX, float pY){
@@ -132,21 +133,18 @@ class GyroState {
 
     float getAzCoordX(){
         float vX=fGyroX+fAzOffsetX-fCumulativePrevDrift;
-        Serial.print(" mialo byc "); 
-        Serial.println(vX);         
+        //Serial.print(" mialo byc ");
+        //Serial.println(vX);
 
         if (fDriftPerMinuteTime>0){
             vX-= (millis()-fDriftPerMinuteTime)*fDriftPerMinute/60000.0;
         }
 
-        Serial.print(" jest "); 
-        Serial.println(makeNumber360(vX));         
-        Serial.println(fDriftPerMinuteTime);          
-        Serial.println(fCumulativePrevDrift     );                  
-        Serial.println(fAzOffsetX     );                          
-        
-   
-       
+        /*Serial.print(" jest ");
+        Serial.println(makeNumber360(vX));
+        Serial.println(fDriftPerMinuteTime);
+        Serial.println(fCumulativePrevDrift     );
+        Serial.println(fAzOffsetX     );*/
         return makeNumber360(vX);
     }
 
@@ -156,27 +154,84 @@ class GyroState {
 };
 static GyroState gGyroState;
 
-enum Tmenustate{home, freeze, freeze_question, pos_set, calibration, time_set, local_sid_time, longitude};
+enum Tmenustate{home, freeze, freeze_enter_coord, freeze_question, pos_set, calibration, time_set, local_sid_time, longitude};
 
-uint8_t diplayData1[] = { 0xff, 0xff, 0xff, 0xff }; 
+uint8_t diplayData[] = { 0xff, 0xff, 0xff, 0xff };
+char   tempInputData[] = { 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0x0 };   
+
 class NavigationState{
 
     private:
+ 
         boolean fAllowDisplayGyro=true;
-        float vCalculatedDrift;        
+        float vCalculatedDrift;
         int vSetAzX, vSetAzY;
+        int vEnteredAzX, vEnteredAzY;
+        
+
 
     public:
         Tmenustate fMenuState=home;
         int fMenuSubstate=0;
         int fBrightness=0;
+
         boolean allowDisplayGyro(){
             return fAllowDisplayGyro;
         }
+
+        void showPrompt(TM1637Display pDisplay, int pBufferStartPos){
+            for(int i=0;i<5;i++){
+                diplayData[i] = SEG_D;
+                if (pBufferStartPos+i>8){buzzer(500);}
+                tempInputData[pBufferStartPos+i]=0xf;
+            }
+            pDisplay.setSegments(diplayData);
+        }
+        
+        int inputDataToIntAndPrint(int pFirstPos, int pLen, TM1637Display pDisplay, int pDefaultValue)
+        {  int vResult=0, v10Pow=pLen-1, vDisplayIdx=0;
+        
+           for (int i=pFirstPos; i<pFirstPos+pLen; i++){
+                if (i>8){buzzer(500);}
+                if (vDisplayIdx>4){buzzer(500);delay(5000);buzzer(500);}
+                if (tempInputData[i]<=9 && vResult!=NUMERIC_ERROR){
+                   vResult+=tempInputData[i]*pow(10,v10Pow);
+                   diplayData[vDisplayIdx]=pDisplay.encodeDigit(tempInputData[i]);
+                } else {
+                   vResult=NUMERIC_ERROR;           
+                   diplayData[vDisplayIdx]=SEG_D;        
+                }
+                v10Pow--;                 
+                vDisplayIdx++;
+           }
+           if (pFirstPos<4){
+                pDisplay.setSegments(diplayData, pLen, pFirstPos);
+           } else {
+                pDisplay.setSegments(diplayData, pLen, pFirstPos-4);
+           }
+           Serial.println(" inputDataToIntAndPrint.result 1 and 2");
+           Serial.println(pFirstPos);
+           Serial.println(vResult);           
+           if (vResult==NUMERIC_ERROR){
+               vResult=pDefaultValue;
+               if (pDefaultValue!=NUMERIC_ERROR){
+                   if (pFirstPos<4){               
+                        pDisplay.showNumberDec(pDefaultValue, LEADING_ZERO, pLen, pFirstPos);
+                   } else {
+                        pDisplay.showNumberDec(pDefaultValue, LEADING_ZERO, pLen, pFirstPos-4);
+                   }
+               }
+           }
+           Serial.println(vResult);           
+           return vResult;
+        }
+        
+
         void remoteServe(int pKey)
         {
          //Serial.print(" remoteServe");
          //Serial.println(pKey);
+            int vTmpNum;
 
             if(pKey!=REMOTE_UNKNOWN){
               buzzer(1);
@@ -199,9 +254,8 @@ class NavigationState{
                       display2.setSegments(napis_CAL);
                       mpu.Calibrate();
                     }
-                    fMenuSubstate=0;
                     display1.setBrightness(fBrightness);
-                    display2.setBrightness(fBrightness);                    
+                    display2.setBrightness(fBrightness);
                     delay(200);
                     break;
 
@@ -210,12 +264,12 @@ class NavigationState{
                         display2.setSegments(napis_Cor);
                         fMenuState=freeze_question;
                         vCalculatedDrift=gGyroState.calculateFreezeTimeDriftPerMinute();
-                        fAllowDisplayGyro=false;  
+                        fAllowDisplayGyro=false;
                         display1.clear();
                         display2.clear();
-                        display2.setSegments(napis_Cor);                    
+                        display2.setSegments(napis_Cor);
                         display1.showNumberDec(round(vCalculatedDrift), false, 4, 0);
-                        delay(1000);                        
+                        delay(1000);
                     } else if (pKey==REMOTE_LEFT){
                         vSetAzX=makeNumber360(vSetAzX-1);
                     } else if (pKey==REMOTE_RIGHT){
@@ -224,45 +278,72 @@ class NavigationState{
                         vSetAzY++;
                     } else if (pKey==REMOTE_DOWN){
                         vSetAzY--;
-                    } else if (pKey==REMOTE_HASH && fMenuSubstate>0 && fMenuSubstate<5 ){
-                        diplayData1[fMenuSubstate-1]=SEG_D;
-                        display2.setSegments(diplayData1+fMenuSubstate-1, 1, fMenuSubstate-1);  
-                        fMenuSubstate--;      
-                   } else if (pKey==REMOTE_HASH && fMenuSubstate>=5 && fMenuSubstate<9 ){
-                        diplayData1[fMenuSubstate-4-1]=SEG_D;
-                        display1.setSegments(diplayData1+fMenuSubstate-4-1, 1, fMenuSubstate-4-1); 
-                        fMenuSubstate--;                           
-                    } else if (pKey>=0 && pKey<=9 && fMenuSubstate<4){
-                        if (fMenuSubstate==0)
-                        { 
-                            for(int i=0;i<5;i++){diplayData1[i] = SEG_D;}
-                            display2.setSegments(diplayData1);     
-                            delay(200);
-                        }
-                        fMenuSubstate++;
-                        diplayData1[fMenuSubstate-1]=display2.encodeDigit(pKey);
-                        display2.setSegments(diplayData1+fMenuSubstate-1, 1, fMenuSubstate-1);     
+                    } 
+                    display2.showNumberDec(vSetAzX, LEADING_ZERO, 4, 0);
+                    display1.showNumberDec(vSetAzY, LEADING_ZERO, 4, 0);
+                    if (pKey==REMOTE_HASH){
+                        fMenuState=freeze_enter_coord;
+                        fMenuSubstate=0;
+                        vEnteredAzX = vSetAzX; 
+                        vEnteredAzY = vSetAzY;
+                        showPrompt(display2, 0);                        
                     }
-                    else if (pKey>=0 && pKey<=9 && fMenuSubstate>=4 && fMenuSubstate<8){
-                        if (fMenuSubstate==4)
-                        { 
-                            for(int i=0;i<5;i++){diplayData1[i] = SEG_D;}
-                            display1.setSegments(diplayData1);     
-                            delay(200);
-                        }
-                        fMenuSubstate++;
-                        diplayData1[fMenuSubstate-1]=display1.encodeDigit(pKey);
-                        display1.setSegments(diplayData1+fMenuSubstate-1, 1, fMenuSubstate-1);                           
-                    }       
-                    
-                    if (fMenuSubstate==0){
-                        display2.showNumberDec(vSetAzX, LEADING_ZERO, 4, 0);
-                        display1.showNumberDec(vSetAzY, LEADING_ZERO, 4, 0);
-                    }
-
                     delay(200);
                     break;
-                case freeze_question:         
+
+                case freeze_enter_coord:
+                    if (pKey==REMOTE_HASH){
+                        if (fMenuSubstate<4){
+                            fMenuSubstate=5;
+                            vEnteredAzX = inputDataToIntAndPrint(0, 4, display2, vEnteredAzX);
+                            showPrompt(display1,4);                            
+                        } else {
+                            fMenuSubstate=0;
+                            vEnteredAzY = inputDataToIntAndPrint(4, 4, display1, vEnteredAzY);
+                            showPrompt(display2,0);                            
+                        }
+                    } else if (pKey==REMOTE_LEFT && fMenuSubstate>0 && fMenuSubstate<5 ){
+                        tempInputData[fMenuSubstate-1]=0xf;
+                        diplayData[0]=SEG_D;
+                        display2.setSegments(diplayData, 1, fMenuSubstate-1);
+                        fMenuSubstate--;
+                    } else if (pKey==REMOTE_LEFT && fMenuSubstate>=5 && fMenuSubstate<9 ){
+                        tempInputData[fMenuSubstate-1]=0xf;
+                        diplayData[0]=SEG_D;
+                        display1.setSegments(diplayData, 1, fMenuSubstate-4-1);
+                        fMenuSubstate--;
+                    } else if (pKey>=0 && pKey<=9 && fMenuSubstate<4){
+                        fMenuSubstate++;
+                        tempInputData[fMenuSubstate-1]=pKey;
+                        vTmpNum = inputDataToIntAndPrint(0, 4, display2, NUMERIC_ERROR);
+                        vEnteredAzX =    (vTmpNum==NUMERIC_ERROR ? vEnteredAzX : vTmpNum);
+                        //diplayData[0]=display2.encodeDigit(pKey);
+                        //display2.setSegments(diplayData, 1, fMenuSubstate-1);
+                        if (fMenuSubstate==4){
+                            showPrompt(display1, 4);
+                        }
+                    } else if (pKey>=0 && pKey<=9 && fMenuSubstate>=4 && fMenuSubstate<8){
+                        fMenuSubstate++;
+                        tempInputData[fMenuSubstate-1]=pKey;                        
+                        vTmpNum = inputDataToIntAndPrint(4, 4, display1, NUMERIC_ERROR);
+                        vEnteredAzY =  (vTmpNum==NUMERIC_ERROR ? vEnteredAzY : vTmpNum);
+                        //diplayData[0]=display1.encodeDigit(pKey);
+                        //display1.setSegments(diplayData, 1, fMenuSubstate-4-1);
+                    } else if (pKey==REMOTE_ASTER){
+                        gGyroState.setFreezeOff();
+                        fAllowDisplayGyro=true;
+                        fMenuState=home;
+                        delay(200);                        
+                    } else if (pKey==REMOTE_OK){
+                        fAllowDisplayGyro=true;
+                        fMenuState=home;
+                        gGyroState.setAzCoord(vEnteredAzX, vEnteredAzY);                        
+                        gGyroState.setFreezeOff();                        
+                        buzzer(100);delay(50);buzzer(100);
+                    }
+                    break;
+
+                case freeze_question:
                     if (pKey==REMOTE_OK){
                         gGyroState.setDriftPerMinute(vCalculatedDrift);
                     } else {}
@@ -270,8 +351,8 @@ class NavigationState{
                     fAllowDisplayGyro=true;
                     fMenuState=home;
                     delay(200);
-                    
-                    break;                        
+
+                    break;
             }
 
 
@@ -304,13 +385,13 @@ class NavigationState{
             }
             else if (pKey==REMOTE_OK){
                 Serial.println("Enter ");
-               
+
             }
             else {
                 //Serial.println("UNKNOWN");
             }
         }
-      
+
 };
 
 static NavigationState gNavigationState;

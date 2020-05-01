@@ -15,7 +15,7 @@
 #define IRREC_PIN 7
 #define DIODE_PIN 6
 
-
+#define LEADING_ZERO 0
 
 
 //
@@ -59,6 +59,17 @@ void buzzer(int pCzas=1){
   digitalWrite(BUZZER_PIN,LOW);
 }
 
+float makeNumber360(float pNum){
+    float newPos=pNum;
+    while(newPos<0.0){
+      newPos+=3600.0;
+    }
+    while(newPos>=3600.0){
+      newPos-=3600.0;
+    }
+    return newPos;
+}
+    
 class GyroState {
   private:
     boolean fFreeze;
@@ -118,16 +129,7 @@ class GyroState {
         fAzOffsetX+=pX;
         fAzOffsetY+=pY;
     }
-    float makeNumber360(float pNum){
-        float newPos=pNum;
-        while(newPos<0.0){
-          newPos+=3600.0;
-        }
-        while(newPos>=3600.0){
-          newPos-=3600.0;
-        }
-        return newPos;
-    }
+
     float getAzCoordX(){
         float vX=fGyroX+fAzOffsetX-fCumulativePrevDrift;
         Serial.print(" mialo byc "); 
@@ -154,15 +156,20 @@ class GyroState {
 };
 static GyroState gGyroState;
 
-enum Tmenustate{home, freeze,freeze_question, pos_set, calibration, time_set, local_sid_time, longitude};
+enum Tmenustate{home, freeze, freeze_question, pos_set, calibration, time_set, local_sid_time, longitude};
+
+uint8_t diplayData1[] = { 0xff, 0xff, 0xff, 0xff }; 
 class NavigationState{
 
     private:
         boolean fAllowDisplayGyro=true;
         float vCalculatedDrift;        
+        int vSetAzX, vSetAzY;
+
     public:
         Tmenustate fMenuState=home;
-        int fBrightness=3;
+        int fMenuSubstate=0;
+        int fBrightness=0;
         boolean allowDisplayGyro(){
             return fAllowDisplayGyro;
         }
@@ -181,6 +188,8 @@ class NavigationState{
                         fMenuState=freeze;
                         gGyroState.setFreezeOn();
                         fAllowDisplayGyro=false;
+                        vSetAzX = gGyroState.getAzCoordX();
+                        vSetAzY = gGyroState.getAzCoordY();
                     } else if (pKey==REMOTE_UP){
                         fBrightness=constrain(fBrightness+1,0,3);
                     } else if (pKey==REMOTE_DOWN){
@@ -190,6 +199,7 @@ class NavigationState{
                       display2.setSegments(napis_CAL);
                       mpu.Calibrate();
                     }
+                    fMenuSubstate=0;
                     display1.setBrightness(fBrightness);
                     display2.setBrightness(fBrightness);                    
                     delay(200);
@@ -206,13 +216,50 @@ class NavigationState{
                         display2.setSegments(napis_Cor);                    
                         display1.showNumberDec(round(vCalculatedDrift), false, 4, 0);
                         delay(1000);                        
+                    } else if (pKey==REMOTE_LEFT){
+                        vSetAzX=makeNumber360(vSetAzX-1);
+                    } else if (pKey==REMOTE_RIGHT){
+                        vSetAzX=makeNumber360(vSetAzX+1);
                     } else if (pKey==REMOTE_UP){
-                        fBrightness=constrain(fBrightness+1,0,3);
+                        vSetAzY++;
                     } else if (pKey==REMOTE_DOWN){
-                        fBrightness=constrain(fBrightness-1,0,3);
+                        vSetAzY--;
+                    } else if (pKey==REMOTE_HASH && fMenuSubstate>0 && fMenuSubstate<5 ){
+                        diplayData1[fMenuSubstate-1]=SEG_D;
+                        display2.setSegments(diplayData1+fMenuSubstate-1, 1, fMenuSubstate-1);  
+                        fMenuSubstate--;      
+                   } else if (pKey==REMOTE_HASH && fMenuSubstate>=5 && fMenuSubstate<9 ){
+                        diplayData1[fMenuSubstate-4-1]=SEG_D;
+                        display1.setSegments(diplayData1+fMenuSubstate-4-1, 1, fMenuSubstate-4-1); 
+                        fMenuSubstate--;                           
+                    } else if (pKey>=0 && pKey<=9 && fMenuSubstate<4){
+                        if (fMenuSubstate==0)
+                        { 
+                            for(int i=0;i<5;i++){diplayData1[i] = SEG_D;}
+                            display2.setSegments(diplayData1);     
+                            delay(200);
+                        }
+                        fMenuSubstate++;
+                        diplayData1[fMenuSubstate-1]=display2.encodeDigit(pKey);
+                        display2.setSegments(diplayData1+fMenuSubstate-1, 1, fMenuSubstate-1);     
                     }
-                    display1.setBrightness(fBrightness);
-                    display2.setBrightness(fBrightness);
+                    else if (pKey>=0 && pKey<=9 && fMenuSubstate>=4 && fMenuSubstate<8){
+                        if (fMenuSubstate==4)
+                        { 
+                            for(int i=0;i<5;i++){diplayData1[i] = SEG_D;}
+                            display1.setSegments(diplayData1);     
+                            delay(200);
+                        }
+                        fMenuSubstate++;
+                        diplayData1[fMenuSubstate-1]=display1.encodeDigit(pKey);
+                        display1.setSegments(diplayData1+fMenuSubstate-1, 1, fMenuSubstate-1);                           
+                    }       
+                    
+                    if (fMenuSubstate==0){
+                        display2.showNumberDec(vSetAzX, LEADING_ZERO, 4, 0);
+                        display1.showNumberDec(vSetAzY, LEADING_ZERO, 4, 0);
+                    }
+
                     delay(200);
                     break;
                 case freeze_question:         
@@ -257,8 +304,7 @@ class NavigationState{
             }
             else if (pKey==REMOTE_OK){
                 Serial.println("Enter ");
-        Serial.print("brightnes=");
-        Serial.println(fBrightness);                  
+               
             }
             else {
                 //Serial.println("UNKNOWN");
@@ -291,8 +337,8 @@ void setup() {
   Serial.begin(9600);
   display1.clear();
   display2.clear();
-  display1.setBrightness(7);
-  display2.setBrightness(7);
+  display1.setBrightness(gNavigationState.fBrightness);
+  display2.setBrightness(gNavigationState.fBrightness);
   display2.setSegments(napis_HI);
   for(i=1;i>=0;i--){
    display1.showNumberDec(i);
@@ -338,8 +384,8 @@ void loop() {
   mpu.Execute();
   gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);
   if (gNavigationState.allowDisplayGyro()){
-      display1.showNumberDec(gGyroState.getAzCoordY(), true, 4, 0);
-      display2.showNumberDec(gGyroState.getAzCoordX(), true, 4, 0);
+      display1.showNumberDec(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0);
+      display2.showNumberDec(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0);
   }
   if ((millis()-gGyroState.lastPrint)>1000){
       gGyroState.lastPrint=millis();

@@ -6,6 +6,7 @@
 #include <TM1637Display.h>
 #include "RTClib.h"
 #include "remote_decode.h"
+#include "AvgStd.h"
 
 #define DISPLAY1_CLK 2
 #define DISPLAY1_DIO 3
@@ -14,10 +15,11 @@
 #define BUZZER_PIN 12
 #define IRREC_PIN 7
 #define DIODE_PIN 6
-
 #define LEADING_ZERO 1
-
 #define NUMERIC_ERROR 0x7FFF
+
+#define AUTOFREEZE_TIME_ENABLE 10000 //millis
+#define AUTOFREEZE_TIME_CORRECTING_DRIFT 30 //seconds
 
 //
 //      A
@@ -71,6 +73,117 @@ float makeNumber360(float pNum){
     return newPos;
 }
 
+int gDisplay1LastValue=1234, gDisplay2LastValue=1234;
+
+void Display1_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos)
+{
+    if (length==0 && pos==0){
+        gDisplay1LastValue=1234;
+        return;
+    }        
+    if (gDisplay1LastValue==num){
+        return;
+    }
+    display1.showNumberDec(num, LEADING_ZERO, 4, 0);
+    gDisplay1LastValue=num;
+}
+void Display2_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos)
+{
+    if (length==0 && pos==0){
+        gDisplay2LastValue=1234;
+        return;
+    }            
+    if (gDisplay2LastValue==num){
+        return;
+    }
+    display2.showNumberDec(num, LEADING_ZERO, 4, 0);
+    gDisplay2LastValue=num;
+}
+
+class MotionDetection {
+    private:
+        int16_t xStableMin, xStableMax, yStableMin, yStableMax;   
+        unsigned long fTimer;
+    public:
+
+        AvgStd dataX;
+        AvgStd dataY;
+        AvgStd dataZ;
+        
+        void Calibrate(int pIterations, int pFactorSigma){
+            //dataX.setRejectionSigma(6.0);
+            //dataY.setRejectionSigma(6.0);
+            int vProgresDiv=100;
+            int j=pIterations/vProgresDiv;
+            display2.setSegments(napis_CAL);
+            delay(1000);
+            dataX.reset(); dataY.reset(); dataZ.reset();
+            for(int i=0;i<pIterations;i++){
+                mpu.UpdateRawGyro();
+                dataX.checkAndAddReading(mpu.GetRawGyroX());
+                dataY.checkAndAddReading(mpu.GetRawGyroY());
+                dataZ.checkAndAddReading(mpu.GetRawGyroZ());
+                if (i%vProgresDiv==0){
+                    display1.showNumberDec(--j);
+                }
+            }
+            xStableMin=dataX.getMean() - dataX.getStd() * pFactorSigma/2;
+            xStableMax=dataX.getMean() + dataX.getStd() * pFactorSigma/2;
+            yStableMin=dataY.getMean() - dataY.getStd() * pFactorSigma/2;
+            yStableMax=dataY.getMean() + dataY.getStd() * pFactorSigma/2;
+            
+            Serial.print("  Gyro X  mean=");
+            Serial.print( dataX.getMean() );
+            Serial.print("  min= ");
+            Serial.print( dataX.getMin() ); 
+            Serial.print("  max= ");
+            Serial.print( dataX.getMax());
+            Serial.print("  std= ");
+            Serial.println(dataX.getStd());
+            Serial.print("  xStableMin= ");
+            Serial.println(xStableMin);
+            Serial.print("  xStableMax= ");
+            Serial.println(xStableMax);
+            
+            Serial.print("  GyroY  mean=");
+            Serial.print( dataY.getMean() );
+            Serial.print("  min= ");
+            Serial.print( dataY.getMin() ); 
+            Serial.print("  max= ");
+            Serial.print( dataY.getMax());
+            Serial.print("  std= ");
+            Serial.println(dataY.getStd());
+            Serial.print("  yStableMin= ");
+            Serial.println(yStableMin);
+            Serial.print("  yStableMax= ");
+            Serial.println(yStableMax);            
+            
+            Serial.print("  GyroZ  mean=");
+            Serial.print( dataZ.getMean() );
+            Serial.print("  min= ");
+            Serial.print( dataZ.getMin() ); 
+            Serial.print("  max= ");
+            Serial.print( dataZ.getMax());
+            Serial.print("  std= ");
+            Serial.println(dataZ.getStd());            
+            mpu.SetGyroOffsets(dataX.getMean(), dataY.getMean(), dataZ.getMean());
+        }
+
+        boolean MotionDetected(){
+            mpu.UpdateRawGyro();
+            return ! (mpu.GetRawGyroX()>=xStableMin &&  mpu.GetRawGyroX()<=xStableMax && 
+                      mpu.GetRawGyroY()>=yStableMin &&  mpu.GetRawGyroY()<=yStableMax);
+        }    
+
+         unsigned long getTimer(){
+            return fTimer;
+         }
+         
+         void setTimer(unsigned long pTimer){
+            fTimer=pTimer;
+         }
+};
+
 class GyroState {
   private:
     boolean fFreeze;
@@ -102,7 +215,7 @@ class GyroState {
       return vDriftPerMinute;
     }
     void setDriftPerMinute(float pN){
-        fApplyDriftCorection = (abs(pN-0.0)>0.001);        
+        fApplyDriftCorection = (abs(pN-0.0)>0.001);
         fDriftPerMinute=pN;
         fDriftPerMinuteStartTime==millis();
 
@@ -121,16 +234,16 @@ class GyroState {
     }
 
     void setAzCoord(float pX, float pY){
-        fAzOffsetX=pX-fGyroX;        
-        fAzOffsetY=pY-fGyroY;        
+        fAzOffsetX=pX-fGyroX;
+        fAzOffsetY=pY-fGyroY;
         fDriftPerMinuteStartTime=millis();
     }
-    
+
     void setAzCoordX(float pX){
-        fAzOffsetX=pX-fGyroX;        
+        fAzOffsetX=pX-fGyroX;
         fDriftPerMinuteStartTime=millis();
-    }    
-    
+    }
+
     void setAzCoordByIncrement(float pX, float pY){
         fAzOffsetX+=pX;
         fAzOffsetY+=pY;
@@ -158,21 +271,24 @@ class GyroState {
     }
 };
 static GyroState gGyroState;
+static MotionDetection gMotionDetection;
 
-enum Tmenustate{home, freeze, freeze_enter_coord, freeze_question, pos_set, calibration, time_set, local_sid_time, longitude};
+enum Tmenustate{home, freeze, autofreeze_on, autofreeze_off, freeze_enter_coord, freeze_question, pos_set, calibration,
+                    time_set, local_sid_time, longitude, remote_pressed};
 
 uint8_t diplayData[] = { 0xff, 0xff, 0xff, 0xff };
-char   tempInputData[] = { 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0x0 };   
+char   tempInputData[] = { 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0x0 };
 
 class NavigationState{
 
     private:
- 
+
         boolean fAllowDisplayGyro=true;
         float vCalculatedDrift;
         int vSetAzX, vSetAzY;
         int vEnteredAzX, vEnteredAzY;
-        
+        unsigned long int fAutoFreezeStartTime;
+
 
 
     public:
@@ -193,9 +309,15 @@ class NavigationState{
             pDisplay.setSegments(diplayData);
         }
         
+        void  setAllowDisplayGyro(boolean pValue){
+            Display1_IVC(0, LEADING_ZERO, 0, 0);//reset cache
+            Display2_IVC(0, LEADING_ZERO, 0, 0);            
+            fAllowDisplayGyro=pValue;
+        }
+
         int inputDataToIntAndPrint(int pFirstPos, int pLen, TM1637Display pDisplay, int pDefaultValue)
         {  int vResult=0, v10Pow=pLen-1, vDisplayIdx=0;
-        
+
            for (int i=pFirstPos; i<pFirstPos+pLen; i++){
                 if (i>8){buzzer(500);}
                 if (vDisplayIdx>4){buzzer(500);delay(5000);buzzer(500);}
@@ -203,10 +325,10 @@ class NavigationState{
                    vResult+=tempInputData[i]*pow(10,v10Pow);
                    diplayData[vDisplayIdx]=pDisplay.encodeDigit(tempInputData[i]);
                 } else {
-                   vResult=NUMERIC_ERROR;           
-                   diplayData[vDisplayIdx]=SEG_D;        
+                   vResult=NUMERIC_ERROR;
+                   diplayData[vDisplayIdx]=SEG_D;
                 }
-                v10Pow--;                 
+                v10Pow--;
                 vDisplayIdx++;
            }
            if (pFirstPos<4){
@@ -216,28 +338,30 @@ class NavigationState{
            }
            Serial.println(" inputDataToIntAndPrint.result 1 and 2");
            Serial.println(pFirstPos);
-           Serial.println(vResult);           
+           Serial.println(vResult);
            if (vResult==NUMERIC_ERROR){
                vResult=pDefaultValue;
                if (pDefaultValue!=NUMERIC_ERROR){
-                   if (pFirstPos<4){               
+                   if (pFirstPos<4){
                         pDisplay.showNumberDec(pDefaultValue, LEADING_ZERO, pLen, pFirstPos);
                    } else {
                         pDisplay.showNumberDec(pDefaultValue, LEADING_ZERO, pLen, pFirstPos-4);
                    }
                }
            }
-           Serial.println(vResult);           
+           Serial.println(vResult);
            return vResult;
         }
-        
 
-        void remoteServe(int pKey)
+
+        void remoteServe(int pKey, Tmenustate pForcedState)
         {
          //Serial.print(" remoteServe");
          //Serial.println(pKey);
             int vTmpNum;
-
+            if (pForcedState==fMenuState){
+                return;
+            }
             if(pKey!=REMOTE_UNKNOWN){
               buzzer(1);
             }
@@ -247,7 +371,7 @@ class NavigationState{
                     if (pKey==REMOTE_ASTER){
                         fMenuState=freeze;
                         gGyroState.setFreezeOn();
-                        fAllowDisplayGyro=false;
+                        setAllowDisplayGyro(false);
                         vSetAzX = gGyroState.getAzCoordX();
                         vSetAzY = gGyroState.getAzCoordY();
                     } else if (pKey==REMOTE_UP){
@@ -257,21 +381,42 @@ class NavigationState{
                     } else if (pKey==REMOTE_HASH){
                       display1.setSegments(napis_CAL);
                       display2.setSegments(napis_CAL);
-                      mpu.Calibrate();
+                      //mpu.Calibrate();
+                      gMotionDetection.Calibrate(2000,8);
                       gGyroState.setDriftPerMinute(0.0);
                       gGyroState.setAzCoordX(vSetAzX);
+                    } else if (pForcedState=autofreeze_on){
+                        fMenuState=autofreeze_on;
+                        gGyroState.setFreezeOn();
+                        fAutoFreezeStartTime=millis();
+                        setAllowDisplayGyro(false);
+                        vSetAzX = gGyroState.getAzCoordX();
+                        vSetAzY = gGyroState.getAzCoordY();
                     }
                     display1.setBrightness(fBrightness);
                     display2.setBrightness(fBrightness);
-                    delay(200);
                     break;
 
+                case autofreeze_on:
+                    if (pForcedState==autofreeze_off || pKey==REMOTE_ASTER){
+                        fMenuState=home;
+                        if ((millis() - fAutoFreezeStartTime)/1000 > AUTOFREEZE_TIME_CORRECTING_DRIFT){
+                            vCalculatedDrift=gGyroState.calculateFreezeTimeDriftPerMinute();
+                            gGyroState.setDriftPerMinute(vCalculatedDrift);
+                        }
+                        gGyroState.setFreezeOff();
+                        gGyroState.setAzCoord(vSetAzX, vSetAzY);
+                        setAllowDisplayGyro(true);
+                        
+                        fMenuState=home;
+                    }
+                    break;
                 case freeze:
                     if (pKey==REMOTE_ASTER){
                         display2.setSegments(napis_Cor);
                         fMenuState=freeze_question;
                         vCalculatedDrift=gGyroState.calculateFreezeTimeDriftPerMinute();
-                        fAllowDisplayGyro=false;
+                        setAllowDisplayGyro(false);
                         display1.clear();
                         display2.clear();
                         display2.setSegments(napis_Cor);
@@ -288,10 +433,10 @@ class NavigationState{
                     } else if (pKey==REMOTE_HASH){
                         fMenuState=freeze_enter_coord;
                         fMenuSubstate=0;
-                        vEnteredAzX = vSetAzX; 
+                        vEnteredAzX = vSetAzX;
                         vEnteredAzY = vSetAzY;
-                        showPrompt(display2, 0);                        
-                    }      
+                        showPrompt(display2, 0);
+                    }
                     if (pKey!=REMOTE_HASH && pKey!=REMOTE_ASTER){
                         display2.showNumberDec(vSetAzX, LEADING_ZERO, 4, 0);
                         display1.showNumberDec(vSetAzY, LEADING_ZERO, 4, 0);
@@ -304,11 +449,11 @@ class NavigationState{
                         if (fMenuSubstate<4){
                             fMenuSubstate=5;
                             vEnteredAzX = inputDataToIntAndPrint(0, 4, display2, vEnteredAzX);
-                            showPrompt(display1,4);                            
+                            showPrompt(display1,4);
                         } else {
                             fMenuSubstate=0;
                             vEnteredAzY = inputDataToIntAndPrint(4, 4, display1, vEnteredAzY);
-                            showPrompt(display2,0);                            
+                            showPrompt(display2,0);
                         }
                     } else if (pKey==REMOTE_LEFT && fMenuSubstate>0 && fMenuSubstate<5 ){
                         tempInputData[fMenuSubstate-1]=0xf;
@@ -332,23 +477,23 @@ class NavigationState{
                         }
                     } else if (pKey>=0 && pKey<=9 && fMenuSubstate>=4 && fMenuSubstate<8){
                         fMenuSubstate++;
-                        tempInputData[fMenuSubstate-1]=pKey;                        
+                        tempInputData[fMenuSubstate-1]=pKey;
                         vTmpNum = inputDataToIntAndPrint(4, 4, display1, NUMERIC_ERROR);
                         vEnteredAzY =  (vTmpNum==NUMERIC_ERROR ? vEnteredAzY : vTmpNum);
                         //diplayData[0]=display1.encodeDigit(pKey);
                         //display1.setSegments(diplayData, 1, fMenuSubstate-4-1);
                     } else if (pKey==REMOTE_ASTER){
-                        gGyroState.setAzCoord(vSetAzX, vSetAzY);                         
-                        gGyroState.setFreezeOff();                        
-                        fAllowDisplayGyro=true;
+                        gGyroState.setAzCoord(vSetAzX, vSetAzY);
+                        gGyroState.setFreezeOff();
+                        setAllowDisplayGyro(true);                        
                         fMenuState=home;
-                        delay(200);                        
+                        delay(200);
                     } else if (pKey==REMOTE_OK){
-                        gGyroState.setAzCoord(vEnteredAzX, vEnteredAzY);                        
+                        gGyroState.setAzCoord(vEnteredAzX, vEnteredAzY);
                         vSetAzX=vEnteredAzX; vSetAzY=vEnteredAzY;
                         buzzer(30);delay(30);buzzer(30);
-                        fMenuState=freeze;                        
-                        remoteServe(REMOTE_ASTER);
+                        fMenuState=freeze;
+                        remoteServe(REMOTE_ASTER, remote_pressed);
                     }
                     break;
 
@@ -357,8 +502,8 @@ class NavigationState{
                         gGyroState.setDriftPerMinute(vCalculatedDrift);
                     }
                     gGyroState.setFreezeOff();
-                    gGyroState.setAzCoord(vSetAzX, vSetAzY);                       
-                    fAllowDisplayGyro=true;
+                    gGyroState.setAzCoord(vSetAzX, vSetAzY);
+                    setAllowDisplayGyro(true);
                     fMenuState=home;
                     delay(200);
 
@@ -406,6 +551,8 @@ class NavigationState{
 
 static NavigationState gNavigationState;
 
+unsigned long gProfilingStartTime;
+unsigned long gProfilingCount;
 
 
 void setup() {
@@ -430,11 +577,6 @@ void setup() {
   display2.clear();
   display1.setBrightness(gNavigationState.fBrightness);
   display2.setBrightness(gNavigationState.fBrightness);
-  display2.setSegments(napis_HI);
-  for(i=1;i>=0;i--){
-   display1.showNumberDec(i);
-   delay(1000);
-  }
 
   /*
   display1.clear();
@@ -454,62 +596,87 @@ void setup() {
   Serial.println(mpu.GetGyroZOffset());
   */
 
-  mpu.SetGyroOffsets(-327.04, 109.60, -76.95);
+ //c
+  Serial.println("MotionDetection initialize...");
+  gMotionDetection.Calibrate(2000,7);
   display1.clear();
   display2.clear();
   gGyroState.setAzCoord(0,0);
+  gProfilingStartTime=millis();
 }
 
 
-
 void loop() {
-  decode_results vIRResults;
-  DateTime now;
+    decode_results vIRResults;
+    DateTime now;
 
-  if (irrecv.decode(&vIRResults))
-  {
-        gNavigationState.remoteServe(remoteDecode(vIRResults));
+    if (irrecv.decode(&vIRResults))
+    {
+        gNavigationState.remoteServe(remoteDecode(vIRResults), remote_pressed);
         irrecv.resume();
+        gMotionDetection.setTimer(millis());
         delay(100);
-  }
-  mpu.Execute();
-  gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);
-  if (gNavigationState.allowDisplayGyro()){
-      display1.showNumberDec(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0);
-      display2.showNumberDec(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0);
-  }
-  if ((millis()-gGyroState.lastPrint)>1000){
-      gGyroState.lastPrint=millis();
-      now = rtc.now();
-      Serial.print(now.year(), DEC);
-      Serial.print('/');
-      Serial.print(now.month(), DEC);
-      Serial.print('/');
-      Serial.print(now.day(), DEC);
-      Serial.print(" ");
-      Serial.print(now.hour(), DEC);
-      Serial.print(':');
-      Serial.print(now.minute(), DEC);
-      Serial.print(':');
-      Serial.print(now.second(), DEC);
-      Serial.println();
+    }
+
+    if (gProfilingCount % 10==0){
+        mpu.Execute();      
+        gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);    
+    }
+    
+    if (gNavigationState.allowDisplayGyro()){
+        Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0);
+        Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0);
+    }
+    
+    
+    if (!gMotionDetection.MotionDetected()){
+         if (gProfilingCount % 100==0){
+            Serial.print("stillness  ");
+            Serial.println( millis()-gMotionDetection.getTimer());
+         }
+        if (millis()-gMotionDetection.getTimer()>AUTOFREEZE_TIME_ENABLE){
+            Serial.print("stillness  ");
+            Serial.println( millis()-gMotionDetection.getTimer());            
+            Serial.print("autofreeze ON  ");            
+            gNavigationState.remoteServe(-1, autofreeze_on);            
+        }
+    } else {
+        gMotionDetection.setTimer(millis());
+//        gNavigationState.remoteServe(-1, autofreeze_off);
+    }
 
 
-      Serial.print("AngX = ");
-      Serial.print(mpu.GetAngX());
-      Serial.print("  /  AngY = ");
-      Serial.print(mpu.GetAngY());
-      Serial.print("  /  AngZ = ");
-      Serial.println(mpu.GetAngZ());
-      Serial.print("     AccX = ");
-      Serial.print(mpu.GetRawGyroX());      
-      Serial.print("     AccY = ");
-      Serial.print(mpu.GetRawGyroY());      
-      Serial.print("     AccZ = ");
-      Serial.println(mpu.GetRawGyroZ());      
-      
-      
+    if ((millis()-gGyroState.lastPrint)>1000){
+        gGyroState.lastPrint=millis();
+        now = rtc.now();
+        Serial.print(now.year(), DEC);
+        Serial.print('/');
+        Serial.print(now.month(), DEC);
+        Serial.print('/');
+        Serial.print(now.day(), DEC);
+        Serial.print(" ");
+        Serial.print(now.hour(), DEC);
+        Serial.print(':');
+        Serial.print(now.minute(), DEC);
+        Serial.print(':');
+        Serial.print(now.second(), DEC);
+        Serial.println();
 
-  }
 
+        Serial.print("AngX = ");
+        Serial.print(mpu.GetAngX());
+        Serial.print("  /  AngY = ");
+        Serial.print(mpu.GetAngY());
+        Serial.print("  /  AngZ = ");
+        Serial.println(mpu.GetAngZ());
+        Serial.print("     AccX = ");
+        Serial.print(mpu.GetRawGyroX());
+        Serial.print("     AccY = ");
+        Serial.print(mpu.GetRawGyroY());
+        Serial.print("     AccZ = ");
+        Serial.println(mpu.GetRawGyroZ());
+        Serial.print("     Profiling = ");
+        Serial.println( (gProfilingCount*1000/(millis() - gProfilingStartTime)) );
+    }
+    gProfilingCount++;
 }

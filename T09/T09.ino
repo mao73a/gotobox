@@ -74,11 +74,12 @@ float makeNumber360(float pNum){
 class GyroState {
   private:
     boolean fFreeze;
-    unsigned long fFreezeTime=0;
-    unsigned long fDriftPerMinuteTime=0;
+    unsigned long fFreezeTimeStart=0;
+    unsigned long fDriftPerMinuteStartTime=0;
+    boolean  fApplyDriftCorection=false;
     float fGyroX, fGyroY, fFreezedGyroX;//input gyro angles
     float fAzOffsetX=0, fAzOffsetY=0;//output azimuthal angles
-    float fDriftPerMinute=0, fCumulativePrevDrift=0;
+    float fDriftPerMinute=0;
   public:
     unsigned long lastPrint=0;
     boolean getFreeze(){
@@ -88,23 +89,23 @@ class GyroState {
     void setFreezeOn(){
       fFreeze=true;
       digitalWrite(DIODE_PIN, fFreeze);
-      fFreezeTime=millis();
-      if (fDriftPerMinuteTime>0){
-        fCumulativePrevDrift+=(millis()-fDriftPerMinuteTime)*fDriftPerMinute/60000.0;
-      }
+      fFreezeTimeStart=millis();
+      fFreezedGyroX=fGyroX;
     }
     float calculateFreezeTimeDriftPerMinute(){
       unsigned long vFreezeSpan=0;
       float vDriftPerMinute=0.0;
-      vFreezeSpan=millis()-fFreezeTime;
+      vFreezeSpan=millis()-fFreezeTimeStart;
       if(vFreezeSpan>0){
-         vDriftPerMinute=((fFreezedGyroX-fGyroX)*60000.0)/vFreezeSpan; //per minute
+         vDriftPerMinute=((fGyroX-fFreezedGyroX)*60000.0)/vFreezeSpan; //per minute
       }
       return vDriftPerMinute;
     }
     void setDriftPerMinute(float pN){
+        fApplyDriftCorection = (abs(pN-0.0)>0.001);        
         fDriftPerMinute=pN;
-        fDriftPerMinuteTime=millis();
+        fDriftPerMinuteStartTime==millis();
+
         Serial.print("Drift set to ");
         Serial.print(pN);
         Serial.println(" per minute!!!!!!!!!!!!!!!!");
@@ -115,24 +116,20 @@ class GyroState {
     }
 
     void setGyroCoord(float pX, float pY){
-      if(!fFreeze){
         fGyroX=pX;
         fGyroY=pY;
-      } else {
-        fFreezedGyroX=pX;
-      }
     }
 
     void setAzCoord(float pX, float pY){
-        if(fFreeze){
-            fAzOffsetX=pX-fFreezedGyroX;
-        } else {
-            fAzOffsetX=pX-fGyroX;
-        }
-        fCumulativePrevDrift=0;
-        fDriftPerMinuteTime=millis();
-        fAzOffsetY=pY-fGyroY;
+        fAzOffsetX=pX-fGyroX;        
+        fAzOffsetY=pY-fGyroY;        
+        fDriftPerMinuteStartTime=millis();
     }
+    
+    void setAzCoordX(float pX){
+        fAzOffsetX=pX-fGyroX;        
+        fDriftPerMinuteStartTime=millis();
+    }    
     
     void setAzCoordByIncrement(float pX, float pY){
         fAzOffsetX+=pX;
@@ -140,17 +137,17 @@ class GyroState {
     }
 
     float getAzCoordX(){
-        float vX=fGyroX+fAzOffsetX-fCumulativePrevDrift;
+        float vX=fGyroX+fAzOffsetX;
         //Serial.print(" mialo byc ");
         //Serial.println(vX);
 
-        if (fDriftPerMinute>0.00001f){
-            vX-= (millis()-fDriftPerMinuteTime)*fDriftPerMinute/60000.0;
+        if (fApplyDriftCorection){
+            vX-= (millis()-fDriftPerMinuteStartTime)*fDriftPerMinute/60000.0;
         }
 
         /*Serial.print(" jest ");
         Serial.println(makeNumber360(vX));
-        Serial.println(fDriftPerMinuteTime);
+        Serial.println(fDriftPerMinuteStartTime);
         Serial.println(fCumulativePrevDrift     );
         Serial.println(fAzOffsetX     );*/
         return makeNumber360(vX);
@@ -261,6 +258,8 @@ class NavigationState{
                       display1.setSegments(napis_CAL);
                       display2.setSegments(napis_CAL);
                       mpu.Calibrate();
+                      gGyroState.setDriftPerMinute(0.0);
+                      gGyroState.setAzCoordX(vSetAzX);
                     }
                     display1.setBrightness(fBrightness);
                     display2.setBrightness(fBrightness);

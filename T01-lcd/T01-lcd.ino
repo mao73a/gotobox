@@ -59,6 +59,7 @@ void loop() {
   for (i = 0; i < 101; i++) {
     display1.showNumberDec(i);
     display2.showNumberDec(i);
+    display1.showDots(0xffff, 9);    
     delay(50);
   }
 
@@ -90,6 +91,7 @@ void loop() {
     display2.setBrightness(k);
     display1.setSegments(data);
     display2.setSegments(data);
+
     delay(500);
   }
 
@@ -99,7 +101,7 @@ void loop() {
   delay(1000);
 
   // Print 1234 with the center colon:
-  display1.showNumberDecEx(1234, 0b11100000, false, 4, 0);
+  display1.showNumberDecEx(1234, 0xfff, false, 4, 0);
   display2.showNumberDecEx(1234, 0b11100000, false, 4, 0);
 
   delay(1000);

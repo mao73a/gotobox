@@ -20,6 +20,8 @@
 
 #define AUTOFREEZE_TIME_ENABLE 10000 //millis
 #define AUTOFREEZE_TIME_CORRECTING_DRIFT 30 //seconds
+#define AUTOFREEZE_MOTION_DETECTION_SIGMA 7
+#define AUTOFREEZE_MOTION_DETECTION_COUNT 3
 
 //
 //      A
@@ -56,11 +58,24 @@ MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
 RTC_DS1307 rtc;
 IRrecv irrecv(IRREC_PIN);
 
+unsigned long gProfilingStartTime;
+unsigned long gProfilingCount;
+
 void buzzer(int pCzas=1){
   digitalWrite(BUZZER_PIN,HIGH);
   delay(pCzas);
   digitalWrite(BUZZER_PIN,LOW);
 }
+
+bool buzzerOnOff(boolean pOn){
+    digitalWrite(BUZZER_PIN, pOn ? HIGH : LOW);
+    return true;        
+}  
+
+void redDiode(boolean pOn){
+    digitalWrite(DIODE_PIN, pOn ? HIGH : LOW);
+}
+
 
 float makeNumber360(float pNum){
     float newPos=pNum;
@@ -74,35 +89,40 @@ float makeNumber360(float pNum){
 }
 
 int gDisplay1LastValue=1234, gDisplay2LastValue=1234;
+bool gDisplay1LastShowDot, gDisplay2LastShowDot;
 
-void Display1_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos)
+void Display1_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool pShowDot)
 {
     if (length==0 && pos==0){
-        gDisplay1LastValue=1234;
+        gDisplay1LastValue=9234;
         return;
     }        
-    if (gDisplay1LastValue==num){
+    if (gDisplay1LastValue==num && gDisplay1LastShowDot==pShowDot){
         return;
     }
-    display1.showNumberDec(num, LEADING_ZERO, 4, 0);
+    //display1.showNumberDec(num, LEADING_ZERO, 4, 0);
+    display1.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, LEADING_ZERO, 4, 0);
     gDisplay1LastValue=num;
+    gDisplay1LastShowDot=pShowDot;
 }
-void Display2_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos)
+void Display2_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool pShowDot)
 {
     if (length==0 && pos==0){
-        gDisplay2LastValue=1234;
+        gDisplay2LastValue=9234;
         return;
     }            
-    if (gDisplay2LastValue==num){
+    if (gDisplay2LastValue==num && gDisplay2LastShowDot==pShowDot){
         return;
     }
-    display2.showNumberDec(num, LEADING_ZERO, 4, 0);
+    display2.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, LEADING_ZERO, 4, 0);
     gDisplay2LastValue=num;
+    gDisplay2LastShowDot=pShowDot;    
 }
 
 class MotionDetection {
     private:
         int16_t xStableMin, xStableMax, yStableMin, yStableMax;   
+        int fMotionDetectionCounter=0;
         unsigned long fTimer;
     public:
 
@@ -127,10 +147,10 @@ class MotionDetection {
                     display1.showNumberDec(--j);
                 }
             }
-            xStableMin=dataX.getMean() - dataX.getStd() * pFactorSigma/2;
-            xStableMax=dataX.getMean() + dataX.getStd() * pFactorSigma/2;
-            yStableMin=dataY.getMean() - dataY.getStd() * pFactorSigma/2;
-            yStableMax=dataY.getMean() + dataY.getStd() * pFactorSigma/2;
+            xStableMin=dataX.getMean() - dataX.getStd() * AUTOFREEZE_MOTION_DETECTION_SIGMA/2.0;
+            xStableMax=dataX.getMean() + dataX.getStd() * AUTOFREEZE_MOTION_DETECTION_SIGMA/2.0;
+            yStableMin=dataY.getMean() - dataY.getStd() * AUTOFREEZE_MOTION_DETECTION_SIGMA/2.0;
+            yStableMax=dataY.getMean() + dataY.getStd() * AUTOFREEZE_MOTION_DETECTION_SIGMA/2.0;
             
             Serial.print("  Gyro X  mean=");
             Serial.print( dataX.getMean() );
@@ -169,10 +189,16 @@ class MotionDetection {
             mpu.SetGyroOffsets(dataX.getMean(), dataY.getMean(), dataZ.getMean());
         }
 
-        boolean MotionDetected(){
+        boolean MotionDetected(int pCount){
+            boolean vThisMotionDetectionResult;
+            boolean vReturn;
             mpu.UpdateRawGyro();
-            return ! (mpu.GetRawGyroX()>=xStableMin &&  mpu.GetRawGyroX()<=xStableMax && 
-                      mpu.GetRawGyroY()>=yStableMin &&  mpu.GetRawGyroY()<=yStableMax);
+            vThisMotionDetectionResult=! (mpu.GetRawGyroX()>=xStableMin &&  mpu.GetRawGyroX()<=xStableMax && 
+                                          mpu.GetRawGyroY()>=yStableMin &&  mpu.GetRawGyroY()<=yStableMax);
+            if (vThisMotionDetectionResult) {fMotionDetectionCounter++;}
+            else {fMotionDetectionCounter=0;}
+
+            return fMotionDetectionCounter>=pCount;
         }    
 
          unsigned long getTimer(){
@@ -183,6 +209,8 @@ class MotionDetection {
             fTimer=pTimer;
          }
 };
+
+
 
 class GyroState {
   private:
@@ -201,9 +229,11 @@ class GyroState {
 
     void setFreezeOn(){
       fFreeze=true;
+      redDiode(true);
       digitalWrite(DIODE_PIN, fFreeze);
       fFreezeTimeStart=millis();
       fFreezedGyroX=fGyroX;
+      Serial.println("GyroState FREEZ ON  ");
     }
     float calculateFreezeTimeDriftPerMinute(){
       unsigned long vFreezeSpan=0;
@@ -225,7 +255,7 @@ class GyroState {
     }
     void setFreezeOff(){
       fFreeze=false;
-      digitalWrite(DIODE_PIN, fFreeze);
+      redDiode(false);
     }
 
     void setGyroCoord(float pX, float pY){
@@ -296,6 +326,9 @@ class NavigationState{
         int fMenuSubstate=0;
         int fBrightness=0;
 
+        Tmenustate getMenuState(){
+            return fMenuState;
+        }
         boolean allowDisplayGyro(){
             return fAllowDisplayGyro;
         }
@@ -310,8 +343,8 @@ class NavigationState{
         }
         
         void  setAllowDisplayGyro(boolean pValue){
-            Display1_IVC(0, LEADING_ZERO, 0, 0);//reset cache
-            Display2_IVC(0, LEADING_ZERO, 0, 0);            
+            Display1_IVC(0, LEADING_ZERO, 0, 0, false);//reset cache
+            Display2_IVC(0, LEADING_ZERO, 0, 0, false);            
             fAllowDisplayGyro=pValue;
         }
 
@@ -336,9 +369,6 @@ class NavigationState{
            } else {
                 pDisplay.setSegments(diplayData, pLen, pFirstPos-4);
            }
-           Serial.println(" inputDataToIntAndPrint.result 1 and 2");
-           Serial.println(pFirstPos);
-           Serial.println(vResult);
            if (vResult==NUMERIC_ERROR){
                vResult=pDefaultValue;
                if (pDefaultValue!=NUMERIC_ERROR){
@@ -356,9 +386,10 @@ class NavigationState{
 
         void remoteServe(int pKey, Tmenustate pForcedState)
         {
-         //Serial.print(" remoteServe");
-         //Serial.println(pKey);
             int vTmpNum;
+            if (pKey==REMOTE_UNKNOWN && pForcedState==remote_pressed){
+                return;
+            }
             if (pForcedState==fMenuState){
                 return;
             }
@@ -385,7 +416,7 @@ class NavigationState{
                       gMotionDetection.Calibrate(2000,8);
                       gGyroState.setDriftPerMinute(0.0);
                       gGyroState.setAzCoordX(vSetAzX);
-                    } else if (pForcedState=autofreeze_on){
+                    } else if (pForcedState==autofreeze_on){
                         fMenuState=autofreeze_on;
                         gGyroState.setFreezeOn();
                         fAutoFreezeStartTime=millis();
@@ -409,7 +440,9 @@ class NavigationState{
                         setAllowDisplayGyro(true);
                         
                         fMenuState=home;
+                        for (int i=0;i<3;i++){buzzer(2); if(i!=2){delay(50);}};
                     }
+
                     break;
                 case freeze:
                     if (pKey==REMOTE_ASTER){
@@ -551,12 +584,12 @@ class NavigationState{
 
 static NavigationState gNavigationState;
 
-unsigned long gProfilingStartTime;
-unsigned long gProfilingCount;
-
 
 void setup() {
  int i;
+  display1.clear();
+  display2.clear();
+  
   // Initialization
   mpu.Initialize();
   if (! rtc.begin()) {
@@ -573,8 +606,7 @@ void setup() {
 
   // Calibration
   Serial.begin(9600);
-  display1.clear();
-  display2.clear();
+
   display1.setBrightness(gNavigationState.fBrightness);
   display2.setBrightness(gNavigationState.fBrightness);
 
@@ -603,18 +635,37 @@ void setup() {
   display2.clear();
   gGyroState.setAzCoord(0,0);
   gProfilingStartTime=millis();
+  gMotionDetection.setTimer(millis());
 }
 
+boolean gAlarmDiodeBlink=false;
+boolean alarmDiodeBlink(boolean pOnOff){
+    if (gAlarmDiodeBlink!=pOnOff){
+        //buzzerOnOff(pOnOff);
+        buzzer(1);
+        gAlarmDiodeBlink=pOnOff;
+        redDiode(pOnOff);
+    }
+    return pOnOff;
+}
 
 void loop() {
     decode_results vIRResults;
     DateTime now;
+    boolean vMotionDetected=false;
+    int vTimeToFreeze=0;
+    int vMenuState;
 
+    vMenuState = gNavigationState.getMenuState();
     if (irrecv.decode(&vIRResults))
     {
         gNavigationState.remoteServe(remoteDecode(vIRResults), remote_pressed);
         irrecv.resume();
         gMotionDetection.setTimer(millis());
+        Serial.print("MENU STATE: ");
+        Serial.print(vMenuState);
+        Serial.print(" -> ");
+        Serial.println(gNavigationState.getMenuState());
         delay(100);
     }
 
@@ -623,28 +674,39 @@ void loop() {
         gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);    
     }
     
-    if (gNavigationState.allowDisplayGyro()){
-        Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0);
-        Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0);
-    }
     
-    
-    if (!gMotionDetection.MotionDetected()){
-         if (gProfilingCount % 100==0){
-            Serial.print("stillness  ");
+    if (!gMotionDetection.MotionDetected(AUTOFREEZE_MOTION_DETECTION_COUNT)){
+         if (gProfilingCount % 500==0){
+            Serial.print("stillness?  ");
             Serial.println( millis()-gMotionDetection.getTimer());
          }
-        if (millis()-gMotionDetection.getTimer()>AUTOFREEZE_TIME_ENABLE){
-            Serial.print("stillness  ");
-            Serial.println( millis()-gMotionDetection.getTimer());            
-            Serial.print("autofreeze ON  ");            
+         vTimeToFreeze=AUTOFREEZE_TIME_ENABLE-(millis()-gMotionDetection.getTimer());
+        if (vTimeToFreeze<=0){
+            alarmDiodeBlink(false);
+            if (gProfilingCount % 500==0){
+                Serial.print("yes! Stillnes.  ");
+                Serial.println( millis()-gMotionDetection.getTimer());            
+                Serial.print("autofreeze ON  ");            
+            }
             gNavigationState.remoteServe(-1, autofreeze_on);            
         }
+        vMotionDetected=false;
     } else {
+        alarmDiodeBlink(false);
         gMotionDetection.setTimer(millis());
-//        gNavigationState.remoteServe(-1, autofreeze_off);
+        vTimeToFreeze=AUTOFREEZE_TIME_ENABLE;
+        vMotionDetected=true;        
+        if (gNavigationState.getMenuState()==autofreeze_on){
+            gNavigationState.remoteServe(-1, autofreeze_off);
+        }
     }
 
+    if (gNavigationState.allowDisplayGyro()){
+        alarmDiodeBlink((vTimeToFreeze<3000 && vTimeToFreeze>1000 && round(millis()/200)%2==0) ||
+                        (vTimeToFreeze<=1000 && round(millis()/30)%2==0));
+        Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false);
+        Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, vMotionDetected);
+    }
 
     if ((millis()-gGyroState.lastPrint)>1000){
         gGyroState.lastPrint=millis();

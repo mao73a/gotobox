@@ -8,8 +8,8 @@
 #include "remote_decode.h"
 #include "AvgStd.h"
 
-#define DISPLAY1_CLK 2
-#define DISPLAY1_DIO 3
+#define DISPLAY1_CLK 8
+#define DISPLAY1_DIO 9
 #define DISPLAY2_CLK 4
 #define DISPLAY2_DIO 5
 #define BUZZER_PIN 12

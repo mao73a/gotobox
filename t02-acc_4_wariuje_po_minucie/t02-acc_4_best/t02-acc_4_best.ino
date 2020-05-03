@@ -26,7 +26,7 @@ MPU6050 mpu;
  * ========================================================================= */
 
 
-#define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
+#define INTERRUPT_PIN 3  // use pin 2 on Arduino Uno & most boards
 #define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
 bool blinkState = false;
 
@@ -99,10 +99,11 @@ void setup() {
     devStatus = mpu.dmpInitialize();
 
     // supply your own gyro offsets here, scaled for min sensitivity
-    mpu.setXGyroOffset(220);
-    mpu.setYGyroOffset(76);
-    mpu.setZGyroOffset(-85);
-    mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
+    mpu.setXGyroOffset(-329.28);
+    mpu.setYGyroOffset(117.98);
+    mpu.setZGyroOffset(-85.73);
+    mpu.setZAccelOffset(1688); // 1688 factory default for my test chip
+    //mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
 
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {

@@ -7,7 +7,7 @@
 
 #Arduino communications added by Keegan Crankshaw (http://github.com/kcranky)
 
-import struct, time, socket, select, serial, ephem
+import struct, time, socket, select, ephem
 from math import *
 
 M_PI =  3.1415926535897932385
@@ -16,14 +16,18 @@ M_PI =  3.1415926535897932385
 open_sockets = []
 
 #add the objects for ephem
-ct = ephem.city('Cape Town')
-ct.long="33:57:28.42"
-ct.lat="-18:27:40.51"
-#ct.elevation = 106
+ct = ephem.city('Home')
+#ct.long=50.014180
+#ct.lat=19.873475
+#ct.elevation = 230
+#ct.long="50:1:29.63"
+#ct.lat="19:50:49.20"
+
+#ct = ephem.lookup("Poland Krakow Dobrowolskiego 14")
 
 #Get the arduino serial port
 #Use an int 1 value below the actual com port
-arduino = serial.Serial(7, 9600)
+
 
 # AF_INET means IPv4.
 # SOCK_STREAM means a TCP connection.
@@ -37,7 +41,10 @@ listening_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 # itself only to one IP.
 # The port must greater than 1023 if you plan running this script as a
 # normal user. Ports below 1024 require root privileges.
-listening_socket.bind( ("", 10001) )
+
+#listening_socket.bind( ("", 10001) )
+
+listening_socket.bind( ("127.0.0.1", 10001) )
 
 # The parameter defines how many new connections can wait in queue.
 # Note that this is NOT the number of open connections (which has no limit).
@@ -46,7 +53,10 @@ listening_socket.listen(5)
 
 current_position = []
 
+
 def printit(ra_int, dec_int):
+    print("ra1= " + str(ra_int))
+    print("dec1= " + str(dec_int))   
     h = ra_int
     d = floor(0.5 + dec_int*(360*3600*1000/4294967296.0));
     dec_sign = ''
@@ -88,8 +98,10 @@ def printit(ra_int, dec_int):
     body._dec = star.dec
     body._epoch = star.epoch    
     body.compute(ct)
-    #print("azimuth= " + str(body.az))
-    #print("altitude= " + str(body.alt))
+    print("ra2= " + str(body._ra))
+    print("dec2= " + str(body._dec))    
+    print("azimuth= " + str(body.az))
+    print("altitude= " + str(body.alt))
     altToArd(body.alt)
     azToArd(body.az)
     
@@ -97,28 +109,14 @@ def printit(ra_int, dec_int):
 #1) The motor steps 0.9 degrees,
 #2) The gear ratio on the azimuth is 2:1
 #I have commented where these values come into play. adjust them as need be
-
+def arduino_write(txt):
+    print("arduino_serial_write "+str(txt)+"\n")
+    
 def altToArd(alt):
-    nalt = str(alt)
-    nalt = nalt[:nalt.index(':')]
-    arduino.write(b'y')
-    nalt = int(nalt)/360*400 #Conversion of 360 degrees to 400 degrees
-    time.sleep(0.01)
-    for i in range(0, int(nalt)):
-        arduino.write(b's')
-        time.sleep(0.01)
-    arduino.write(b'e')
+    arduino_write( str(alt))
 
 def azToArd(az):
-    naz = str(az)
-    naz = naz[:naz.index(':')]
-    arduino.write(b'x')
-    time.sleep(0.01)
-    naz = int(naz)/360*400 #Conversion of 360 degrees to 400 degrees
-    for i in range(0, int(naz)*2): #Gearing ratio is 2
-        arduino.write(b's')
-        time.sleep(0.01)
-    arduino.write(b'e')
+    arduino_write( str(az))
     print('data sent')
     
 
@@ -141,6 +139,8 @@ while True:
                 #print("%x, %o" % (data[3], data[3]))
                 ra = data[3]*(M_PI/0x80000000)
                 dec = data[4]*(M_PI/0x80000000)
+                print("RA0="+str(ra))
+                print("DEC0="+str(dec))
                 cdec = cos(dec)
 
                 desired_pos = []
@@ -155,4 +155,4 @@ while True:
                 #update current position                
                 reply = struct.pack("3iIii", 24, 0, int(time.time()), data[3], data[4], 0)
                 #print (repr(reply))
-                #print(i.send(reply))
+                print(i.send(reply))

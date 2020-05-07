@@ -1,3 +1,4 @@
+#define ESP32
 #include <IRremote.h>       // biblioteka
 
 IRrecv irrecv(7); 

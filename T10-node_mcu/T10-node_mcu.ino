@@ -8,13 +8,17 @@
 #include "remote_decode.h"
 #include "AvgStd.h"
 
-#define DISPLAY1_CLK 8
-#define DISPLAY1_DIO 9
-#define DISPLAY2_CLK 4
-#define DISPLAY2_DIO 5
-#define BUZZER_PIN 12
-#define IRREC_PIN 7
-#define DIODE_PIN 6
+#define BUZZER_PIN D3
+#define DIODE_PIN D0
+#define IRREC_PIN D4
+
+#define DISPLAY1_CLK D5
+#define DISPLAY1_DIO D6
+#define DISPLAY2_CLK 10 //GPIO3
+#define DISPLAY2_DIO 9 //GPIO1
+
+
+
 #define LEADING_ZERO 1
 #define NUMERIC_ERROR 0x7FFF
 

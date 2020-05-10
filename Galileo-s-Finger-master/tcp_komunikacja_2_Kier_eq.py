@@ -4,9 +4,19 @@ import struct
 import time
 import socket, select
 from math import *
+import serial
 
 M_PI =  3.1415926535897932385
 
+ser = serial.Serial(
+        port='COM5',
+        baudrate = 9600,
+        parity=serial.PARITY_NONE,
+        stopbits=serial.STOPBITS_ONE,
+        bytesize=serial.EIGHTBITS,
+        timeout=1
+      )
+      
 # List of socket objects that are currently open
 open_sockets = []
 
@@ -64,44 +74,53 @@ def printit(ra_int, dec_int):
 
 while True:
     # Waits for I/O being available for reading from any socket object.
+    print("Waiting for Stellarium to connect...\n")    
     rlist, wlist, xlist = select.select( [listening_socket] + open_sockets, [], [] )
+    print("Stellarium connected.\n")
     for i in rlist:
         if i is listening_socket:
+            print("Accepting connection.\n")
             new_socket, addr = listening_socket.accept()
             open_sockets.append(new_socket)
         else:
-            data = i.recv(1024)
-            if data == "":
-                open_sockets.remove(i)
-                print ("Connection closed")
-            else:
-                print (repr(data))
-                data = struct.unpack("3iIi", data)
-                print ("otrzymane wsp: ")
-                print ("%x, %o" % (data[3], data[3]))
-                ra = data[3]*(M_PI/0x80000000)
-                dec = data[4]*(M_PI/0x80000000)
-                cdec = cos(dec)
+            while True:        
+                print(" Listening to Stellarium...n")
+                data = i.recv(1024)
+                if data == "":
+                    print("     if 3.1\n")
+                    open_sockets.remove(i)
+                    print ("Connection closed.")
+                else:
+                    print("Receiving GoTo command...n")
+                    print (repr(data))
+                    data = struct.unpack("3iIi", data)
+                    print ("otrzymane wsp: ")
+                    print ("%x, %o" % (data[3], data[3]))
+                    ra = data[3]*(M_PI/0x80000000)
+                    dec = data[4]*(M_PI/0x80000000)
+                    cdec = cos(dec)
 
-                desired_pos = []
-                desired_pos.append(cos(ra)*cdec)
-                desired_pos.append(sin(ra)*cdec)
-                desired_pos.append(sin(dec))
-                printit(data[3], data[4])
-                print ("desired pos ra, dec: ")
-                ra_int=data[3]
-                de_int=data[4]
-                print ("RA=",ra_int, "DE=", de_int)
+                    desired_pos = []
+                    desired_pos.append(cos(ra)*cdec)
+                    desired_pos.append(sin(ra)*cdec)
+                    desired_pos.append(sin(dec))
+                    printit(data[3], data[4])
+                    print ("desired pos ra, dec: ")
+                    ra_int=data[3]
+                    de_int=data[4]
+                    print ("RA=",ra_int, "DE=", de_int)
 
-                #Set desired position and get current
-                #send current position back to client
-                #update current position
-                
-                #reply = struct.pack("3iIii", 24, 0, int(time.time()), data[3], data[4], 0)
-                for vI in range(1,10,1):
-                    ra_int=ra_int+10000000*vI
-                    de_int=de_int+10000000*vI
-                    reply = struct.pack("3iIii", 24, 0, int(time.time()), ra_int, de_int, 0)
-                    print(i.send(reply))                    
-                    time.sleep(1)
-                #print repr(reply)
+                    #Set desired position and get current
+                    #send current position back to client
+                    #update current position
+                    
+                    #reply = struct.pack("3iIii", 24, 0, int(time.time()), data[3], data[4], 0)
+                    for vI in range(1,10,1):
+                        ra_int=ra_int+10000000*vI
+                        de_int=de_int+10000000*vI
+                        reply = struct.pack("3iIii", 24, 0, int(time.time()), ra_int, de_int, 0)
+                        print(i.send(reply))                    
+                        time.sleep(1)
+                    #print repr(reply)
+
+ser.close

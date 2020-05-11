@@ -1,0 +1,1 @@
+C:\Users\ochal\AppData\Local\Programs\Python\Python37\python.exe -u server_stellarium_az.py 

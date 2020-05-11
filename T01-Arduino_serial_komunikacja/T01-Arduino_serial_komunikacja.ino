@@ -67,12 +67,13 @@ void loop() {
   static unsigned sGotoAzimuth;
   static int sGotoAltitude;
   static int sSendCounter=0;
-  bool sWysylajPozycje=false;
+  static bool sWysylajPozycje=false;
   // put your main code here, to run repeatedly:
   if (RS_nasluchwianieObsluga(sGotoAzimuth, sGotoAltitude)){
      sWysylajPozycje=true;
+     sSendCounter=0;
   }
-  if(sWysylajPozycje && sSendCounter<100){
+  if(sWysylajPozycje && sSendCounter<1000){
       sendPositionToStellarium(sGotoAzimuth, sGotoAltitude);
       sSendCounter++;
       delay(100);      

@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <TinyMPU6050.h>
 #include <TM1637Display.h>
-#include "RTClib.h"
 #include "remote_decode.h"
 #include "AvgStd.h"
 
@@ -77,7 +76,7 @@ const uint8_t napis_off[] = {
 TM1637Display display1 = TM1637Display(DISPLAY1_CLK, DISPLAY1_DIO);
 TM1637Display display2 = TM1637Display(DISPLAY2_CLK, DISPLAY2_DIO);
 MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
-RTC_DS1307 rtc;
+
 IRrecv irrecv(IRREC_PIN);
 
 unsigned long gProfilingStartTime;
@@ -338,11 +337,72 @@ class GyroState {
         return fGyroY+fAzOffsetY;
     }
 };
+
+int RS_service(float &pAzimuth, float &pAltitude)
+{
+  static byte byteHi;
+  static byte byteLo;
+  static int gInputState = 0;
+  static int incomingByte;
+  static unsigned gOdczytInteger01;
+  static unsigned gOdczytInteger02;  
+   
+  if (Serial.available() > 0) {
+     incomingByte = Serial.read();
+     if      (gInputState == 0 && char(incomingByte) == 'g') {
+       gInputState++;
+     }
+     else if (gInputState == 1 && char(incomingByte) == 'o') {
+       gInputState++;
+     }     
+     else if (gInputState == 2 && char(incomingByte) == 't') {
+       gInputState++;
+     }     
+     else if (gInputState == 3 && char(incomingByte) == 'o') {
+       gInputState++;
+     }
+     else if (gInputState == 4) {
+       byteHi = incomingByte;
+       gInputState++;
+     }
+     else if (gInputState == 5) {
+       byteLo = incomingByte;
+       gOdczytInteger01 = byteHi * 256 + byteLo;
+       gInputState++;
+     }
+     else if (gInputState == 6) {
+       byteHi = incomingByte;
+       gInputState++;
+     }
+     else if (gInputState == 7) {
+       byteLo = incomingByte;
+       gOdczytInteger02 = byteHi * 256 + byteLo;
+       gInputState++;
+     }
+     else if (gInputState == 8 && char(incomingByte) == '.') {
+       gInputState=0;
+       pAzimuth = gOdczytInteger01*360.0/65535.0;
+       pAltitude= (gOdczytInteger02*180.0/65535.0-90.0);
+       return 1; //sygnal odebrany - mozna go przetwarzac w glownej petli       
+     }
+   
+  }
+  return 0;
+}
+
+void sendPositionToStellarium(float pAz, float pAl){
+   unsigned vAz=round(pAz*10);
+   int vAl=round(pAl*10);
+   Serial.print("AZAL:");
+   Serial.print(vAz);    
+   Serial.print(",");
+   Serial.println(vAl); 
+}
+
 static GyroState gGyroState;
 static MotionDetection gMotionDetection;
 
-enum Tmenustate{home, freeze, autofreeze_on, autofreeze_off, freeze_enter_coord, freeze_question, pos_set, calibration,
-                    time_set, local_sid_time, longitude, remote_pressed};
+enum Tmenustate{home, freeze, freeze_enter_coord, freeze_question, pos_set, calibration, remote_pressed};
 
 uint8_t diplayData[] = { 0xff, 0xff, 0xff, 0xff };
 char   tempInputData[] = { 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0xf, 0x0 };
@@ -355,7 +415,6 @@ class NavigationState{
         float vCalculatedDrift;
         int vSetAzX, vSetAzY;
         int vEnteredAzX, vEnteredAzY;
-        boolean fAutoFreezeEnabled=true;
         unsigned long int fAutoFreezeStartTime;
 
 
@@ -371,9 +430,7 @@ class NavigationState{
             return fAllowDisplayGyro;
         }
 
-        boolean getAutoFreezeEnabled(){
-            return fAutoFreezeEnabled;
-        }
+
         void showPrompt(TM1637Display pDisplay, int pBufferStartPos){
             for(int i=0;i<5;i++){
                 diplayData[i] = SEG_D;
@@ -458,40 +515,14 @@ class NavigationState{
                       gMotionDetection.Calibrate(2000);
                       gGyroState.setDriftPerMinute(0.0);
                       gGyroState.setAzCoordX(vSetAzX);
-                      
-                    } else if (pKey==REMOTE_0){
-                        setAllowDisplayGyro(false);
-                        fAutoFreezeEnabled = !fAutoFreezeEnabled;
-                        display2.setSegments(napis_Auto);
-                        display1.setSegments(fAutoFreezeEnabled ? napis_on : napis_off);
-                        delay(1000);
-                        setAllowDisplayGyro(true);
-                    } else if (pForcedState==autofreeze_on){
-                        fMenuState=autofreeze_on;
-                        gGyroState.setFreezeOn();
-                        fAutoFreezeStartTime=millis();
 
-                        setAllowDisplayGyro(false);
-                        vSetAzX = gGyroState.getAzCoordX();
-                        vSetAzY = gGyroState.getAzCoordY();
                     }
                     display1.setBrightness(fBrightness);
                     display2.setBrightness(fBrightness);
+                    Display1_IVC(0, LEADING_ZERO, 0, 0, false);//reset display cache to change brightness
+                    Display2_IVC(0, LEADING_ZERO, 0, 0, false);                                
                     break;
 
-                case autofreeze_on:
-                    if (pForcedState==autofreeze_off || pKey==REMOTE_ASTER){
-                        fMenuState=home;
-                        gGyroState.setFreezeOff();
-                        gGyroState.setAzCoord(vSetAzX, vSetAzY);
-                        setAllowDisplayGyro(true);
-                        fMenuState=home;
-                        buzzer(2); delay(50); buzzer(2); delay(100);buzzer(3);
-                    } else if (pForcedState==remote_pressed) {
-                        fMenuState=freeze;
-                        remoteServe(pKey, remote_pressed);
-                    }
-                    break;
                 case freeze:
                     if (pKey==REMOTE_ASTER){
                         display2.setSegments(napis_Cor);
@@ -632,13 +663,6 @@ void setup() {
   
   // Initialization
   mpu.Initialize();
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    while (1);
-  }
-  if (! rtc.isrunning()) {
-    Serial.println("RTC is NOT running!");
-  }
 
   pinMode(BUZZER_PIN,OUTPUT);//initialize the buzzer pin as an output
   irrecv.enableIRIn(); // uruchamia odbiornik podczerwieni
@@ -678,24 +702,19 @@ void setup() {
   gMotionDetection.setTimer(millis());
 }
 
-boolean gAlarmDiodeBlink=false;
-boolean alarmDiodeBlink(boolean pOnOff){
-    if (gAlarmDiodeBlink!=pOnOff){
-        //buzzerOnOff(pOnOff);
-        buzzer(1);
-        gAlarmDiodeBlink=pOnOff;
-        redDiode(pOnOff);
-    }
-    return pOnOff;
-}
+
 
 unsigned long gCalibrationStartTime;
+unsigned long gLastSentToStellarium=0;
+
+
 void loop() {
     decode_results vIRResults;
-    DateTime now;
     boolean vMotionDetected=false;
     int vTimeToFreeze=0;
     int vMenuState;
+    float sGotoAzimuth;
+    float sGotoAltitude;    
 
     vMenuState = gNavigationState.getMenuState();
     if (irrecv.decode(&vIRResults))
@@ -711,46 +730,30 @@ void loop() {
     }
 
     if (gProfilingCount % 10==0){
+        if (RS_service(sGotoAzimuth, sGotoAltitude)){
+            Serial.print("|->  Received coordinates: Az=");
+            Serial.print(sGotoAzimuth);
+            Serial.print(" Alt=");
+            Serial.println(sGotoAltitude);
+           gGyroState.setAzCoord(sGotoAzimuth*10.0, sGotoAltitude*10.0);
+           Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false);
+           Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, false);           
+        }
         mpu.Execute();      
-        gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);    
+        gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);  
+        if ((millis()-gLastSentToStellarium)>100){
+          gLastSentToStellarium=millis();
+          sendPositionToStellarium(gGyroState.getAzCoordX()/10.0, gGyroState.getAzCoordY()/10.0);
+          Serial.print("|<-  Send coordinates: Az=");
+          Serial.print(gGyroState.getAzCoordX()/10.0);
+          Serial.print(" Alt=");
+          Serial.println(gGyroState.getAzCoordY()/10.0);          
+        }    
     }
     
-    if (gNavigationState.getAutoFreezeEnabled()){
-        if (!gMotionDetection.MotionDetected(AUTOFREEZE_MOTION_DETECTION_COUNT)){
-             if (gProfilingCount % 500==0){
-                Serial.print("stillness?  ");
-                Serial.println( millis()-gMotionDetection.getTimer());
-             }
-             vTimeToFreeze=AUTOFREEZE_TIME_ENABLE-(millis()-gMotionDetection.getTimer());
-            if (vTimeToFreeze<=0){
-                alarmDiodeBlink(false);
-                if (gProfilingCount % 500==0){
-                    Serial.print("yes! Stillnes.  ");
-                    Serial.println( millis()-gMotionDetection.getTimer());            
-                    Serial.print("autofreeze ON  ");            
-                }
-                gNavigationState.remoteServe(-1, autofreeze_on);            
-            }
-            vMotionDetected=false;
-        } else {
-            alarmDiodeBlink(false);
-            gMotionDetection.setTimer(millis());
-            vTimeToFreeze=AUTOFREEZE_TIME_ENABLE;
-            vMotionDetected=true;        
-            if (gNavigationState.getMenuState()==autofreeze_on){
-                gNavigationState.remoteServe(-1, autofreeze_off);
-            }
-        }
-    }
-
     if (gNavigationState.allowDisplayGyro()){
-        if (gNavigationState.getAutoFreezeEnabled()){
-            alarmDiodeBlink((vTimeToFreeze<3000 && vTimeToFreeze>50 && round(millis()/500)%2==0) ||
-                      //  (vTimeToFreeze<800 && vTimeToFreeze>100 && round(millis()/200)%2==0) ||
-                        (vTimeToFreeze<=50 && round(millis()/20)%2==0));
-        }
         Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false);
-        Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, vMotionDetected);
+        Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, false);
     } else if (gGyroState.getFreeze()){
         if (gCalibrationStartTime<gGyroState.getFreezeTimeStart()){
             gCalibrationStartTime=gGyroState.getFreezeTimeStart();
@@ -766,34 +769,21 @@ void loop() {
 
     if ((millis()-gGyroState.lastPrint)>1000){
         gGyroState.lastPrint=millis();
-        now = rtc.now();
-        Serial.print(now.year(), DEC);
-        Serial.print('/');
-        Serial.print(now.month(), DEC);
-        Serial.print('/');
-        Serial.print(now.day(), DEC);
-        Serial.print(" ");
-        Serial.print(now.hour(), DEC);
-        Serial.print(':');
-        Serial.print(now.minute(), DEC);
-        Serial.print(':');
-        Serial.print(now.second(), DEC);
-        Serial.println();
 
 
-        Serial.print("AngX = ");
-        Serial.print(mpu.GetAngX());
+        Serial.print("|   AngX = ");
+        Serial.print(  mpu.GetAngX());
         Serial.print("  /  AngY = ");
         Serial.print(mpu.GetAngY());
         Serial.print("  /  AngZ = ");
         Serial.println(mpu.GetAngZ());
-        Serial.print("     AccX = ");
+        Serial.print("|     AccX = ");
         Serial.print(mpu.GetRawGyroX());
         Serial.print("     AccY = ");
         Serial.print(mpu.GetRawGyroY());
         Serial.print("     AccZ = ");
         Serial.println(mpu.GetRawGyroZ());
-        Serial.print("     Profiling = ");
+        Serial.print("|     Profiling = ");
         Serial.println( (gProfilingCount*1000/(millis() - gProfilingStartTime)) );
     }
     gProfilingCount++;

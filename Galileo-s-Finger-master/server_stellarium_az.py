@@ -28,7 +28,7 @@ body = ephem.FixedBody()
 try:
     ser = serial.Serial(
             port='COM5',
-            baudrate = 9600,
+            baudrate = 115200,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
             bytesize=serial.EIGHTBITS,
@@ -184,9 +184,9 @@ while True:
                     if tele[0:5]==b'AZAL:':
                        #data received from Arduiono; send them to Stellarium 
                        sep=tele.find(b',')
-                       tele_Az=int(tele[5:sep].decode('cp1250'))
-                       tele_Al=int(tele[sep+1:].decode('cp1250'))
-                       (int_tele_Az, int_tele_Al)=arduinoToStellarium(tele_Az/10.0, tele_Al/10.0)
+                       tele_Az=float(tele[5:sep].decode('cp1250'))
+                       tele_Al=float(tele[sep+1:].decode('cp1250'))
+                       (int_tele_Az, int_tele_Al)=arduinoToStellarium(tele_Az, tele_Al)
                        reply = struct.pack("3iIii", 24, 0, int(time.time()), int(int_tele_Az), int(int_tele_Al), 0)
                        i.send(reply)
                        i.send(reply)

@@ -23,6 +23,8 @@
 #define AUTOFREEZE_MOTION_DETECTION_COUNT 3
 #define AUTOCALLIBRATION_TIME 4000 //millis
 
+#define SMOOTHING_ARRAY_COUNT 10
+
 //
 //      A
 //     ---
@@ -208,6 +210,7 @@ class MotionDetection {
             int vProgresDiv=100;
             int j=pIterations/vProgresDiv;
             display2.setSegments(napis_CAL);
+            display1.setSegments(napis_CAL);
             delay(1000);
             dataX.reset(); dataY.reset(); dataZ.reset();
             for(int i=0;i<pIterations;i++){
@@ -255,8 +258,11 @@ class GyroState {
     float fGyroX, fGyroY, fFreezedGyroX;//input gyro angles
     float fAzOffsetX=0, fAzOffsetY=0;//output azimuthal angles
     float fDriftPerMinute=0;
+    float lastYArr[SMOOTHING_ARRAY_COUNT];    
+    int fLastYArr_Idx=0;
   public:
     unsigned long lastPrint=0;
+
     boolean getFreeze(){
         return fFreeze;
     }
@@ -272,6 +278,7 @@ class GyroState {
       fFreezedGyroX=fGyroX;
       Serial.println("GyroState FREEZ ON  ");
     }
+    
     float calculateFreezeTimeDriftPerMinute(){
       unsigned long vFreezeSpan=0;
       float vDriftPerMinute=0.0;
@@ -281,6 +288,7 @@ class GyroState {
       }
       return vDriftPerMinute;
     }
+    
     void setDriftPerMinute(float pN){
         fApplyDriftCorection = (abs(pN-0.0)>0.001);
         fDriftPerMinute=pN;
@@ -298,6 +306,10 @@ class GyroState {
     void setGyroCoord(float pX, float pY){
         fGyroX=pX;
         fGyroY=pY;
+        if (fLastYArr_Idx>=SMOOTHING_ARRAY_COUNT){
+            fLastYArr_Idx=0;
+        }
+        lastYArr[fLastYArr_Idx++]=pY;
     }
 
     void setAzCoord(float pX, float pY){
@@ -335,6 +347,30 @@ class GyroState {
 
     float getAzCoordY(){
         return fGyroY+fAzOffsetY;
+    }
+    
+    float getSmoothAzCoordY(){
+        float vSum=0;
+        for (int i=0; i<SMOOTHING_ARRAY_COUNT; i++){
+          Serial.print(" i=");
+          Serial.print(i);
+          Serial.print(": ");
+          Serial.print(lastYArr[i]);
+          vSum +=lastYArr[i];
+        }
+        Serial.println("");
+        Serial.print("|   >>> getSmoothAzCoordY: ");
+        Serial.print(" vSum=");
+        Serial.print(vSum);
+        Serial.print(" fAzOffsetY=");
+        Serial.print(fAzOffsetY);
+        Serial.print(" fLastYArr_Idx=");
+        Serial.print(fLastYArr_Idx);
+        Serial.print(" Result=");
+        Serial.println(vSum/float(SMOOTHING_ARRAY_COUNT) + fAzOffsetY);
+        
+        
+        return vSum/float(SMOOTHING_ARRAY_COUNT) + fAzOffsetY;
     }
 };
 
@@ -391,12 +427,12 @@ int RS_service(float &pAzimuth, float &pAltitude)
 }
 
 void sendPositionToStellarium(float pAz, float pAl){
-   unsigned vAz=round(pAz*10);
-   int vAl=round(pAl*10);
+   //unsigned vAz=round(pAz*10);
+   //int vAl=round(pAl*10);
    Serial.print("AZAL:");
-   Serial.print(vAz);    
+   Serial.print(round(pAz*10.0)/10.0);    
    Serial.print(",");
-   Serial.println(vAl); 
+   Serial.println(round(pAl*10.0)/10.0); 
 }
 
 static GyroState gGyroState;
@@ -446,8 +482,8 @@ class NavigationState{
             fAllowDisplayGyro=pValue;
         }
 
-        int inputDataToIntAndPrint(int pFirstPos, int pLen, TM1637Display pDisplay, int pDefaultValue)
-        {  int vResult=0, v10Pow=pLen-1, vDisplayIdx=0;
+        int inputDataToIntAndPrint(int pFirstPos, int pLen, TM1637Display pDisplay, int pDefaultValue){
+           int vResult=0, v10Pow=pLen-1, vDisplayIdx=0;
 
            for (int i=pFirstPos; i<pFirstPos+pLen; i++){
                 if (i>8){buzzer(500);}
@@ -482,7 +518,7 @@ class NavigationState{
         }
 
 
-        void remoteServe(int pKey, Tmenustate pForcedState)
+        void remoteServe(int pKey, Tmenustate pForcedState, float pParam1=0, float pParam2=0)
         {
             int vTmpNum;
             if (pKey==REMOTE_UNKNOWN && pForcedState==remote_pressed){
@@ -525,19 +561,14 @@ class NavigationState{
 
                 case freeze:
                     if (pKey==REMOTE_ASTER){
-                        display2.setSegments(napis_Cor);
-                        fMenuState=freeze_question;
-                        vCalculatedDrift=gGyroState.calculateFreezeTimeDriftPerMinute();
-                        setAllowDisplayGyro(false);
-                        display1.clear();
-                        display2.clear();
-                        display2.setSegments(napis_Cor);
-                        display1.showNumberDec(round(vCalculatedDrift), false, 4, 0);
-                        delay(1000);
+                        gGyroState.setFreezeOff();
+                        setAllowDisplayGyro(true);
+                        fMenuState=home;    
+                    } else if (pKey==REMOTE_OK){
+                        buzzer(30);delay(100);buzzer(30);
                         gGyroState.setFreezeOff();
                         gGyroState.setAzCoord(vSetAzX, vSetAzY);
-                        setAllowDisplayGyro(true);
-                        fMenuState=home;                        
+                        fMenuState=home;  
                     } else if (pKey==REMOTE_LEFT){
                         vSetAzX=makeNumber360(vSetAzX-1);
                     } else if (pKey==REMOTE_RIGHT){
@@ -552,6 +583,10 @@ class NavigationState{
                         vEnteredAzX = vSetAzX;
                         vEnteredAzY = vSetAzY;
                         showPrompt(display2, 0);
+                    } else if (pForcedState==pos_set){
+                        vSetAzX = pParam1;
+                        vSetAzY = pParam2;
+                        buzzer(30);
                     }
                     if (pKey!=REMOTE_HASH && pKey!=REMOTE_ASTER){
                         display2.showNumberDec(vSetAzX, LEADING_ZERO, 4, 0);
@@ -599,17 +634,15 @@ class NavigationState{
                         //diplayData[0]=display1.encodeDigit(pKey);
                         //display1.setSegments(diplayData, 1, fMenuSubstate-4-1);
                     } else if (pKey==REMOTE_ASTER){
-                        gGyroState.setAzCoord(vSetAzX, vSetAzY);
-                        gGyroState.setFreezeOff();
-                        setAllowDisplayGyro(true);                        
-                        fMenuState=home;
-                        delay(200);
-                    } else if (pKey==REMOTE_OK){
-                        gGyroState.setAzCoord(vEnteredAzX, vEnteredAzY);
-                        vSetAzX=vEnteredAzX; vSetAzY=vEnteredAzY;
-                        buzzer(30);delay(30);buzzer(30);
                         fMenuState=freeze;
                         remoteServe(REMOTE_ASTER, remote_pressed);
+                    } else if (pKey==REMOTE_OK){
+                        vSetAzX=vEnteredAzX; vSetAzY=vEnteredAzY;
+                        fMenuState=freeze;
+                        remoteServe(REMOTE_OK, remote_pressed);
+                    } else if (pForcedState==pos_set){
+                         fMenuState=freeze;
+                        remoteServe(-1, pos_set, pParam1, pParam2 );
                     }
                     break;
             }
@@ -621,19 +654,15 @@ class NavigationState{
             }
             else if (pKey==REMOTE_LEFT){
                 Serial.print("Left ");
-                gGyroState.setAzCoordByIncrement(-1,0);
             }
             else if (pKey==REMOTE_RIGHT){
                 Serial.print("Right ");
-                gGyroState.setAzCoordByIncrement(+1,0);
             }
             else if (pKey==REMOTE_UP){
                 Serial.print("Up ");
-                gGyroState.setAzCoordByIncrement(0,+1);
             }
             else if (pKey==REMOTE_DOWN){
                 Serial.print("Down ");
-                gGyroState.setAzCoordByIncrement(0,-1);
             }
             else if (pKey==REMOTE_ASTER){
                 Serial.print("* ");
@@ -669,7 +698,8 @@ void setup() {
   pinMode(DIODE_PIN, OUTPUT);//czerwona dioda freeze
 
   // Calibration
-  Serial.begin(9600);
+  //Serial.begin(9600);
+  Serial.begin(115200);
 
   display1.setBrightness(gNavigationState.fBrightness);
   display2.setBrightness(gNavigationState.fBrightness);
@@ -715,6 +745,7 @@ void loop() {
     int vMenuState;
     float sGotoAzimuth;
     float sGotoAltitude;    
+    float vXposition, vYposition;
 
     vMenuState = gNavigationState.getMenuState();
     if (irrecv.decode(&vIRResults))
@@ -729,33 +760,37 @@ void loop() {
         delay(100);
     }
 
-    if (gProfilingCount % 10==0){
+     if ((millis()-gLastSentToStellarium)>100){
         if (RS_service(sGotoAzimuth, sGotoAltitude)){
             Serial.print("|->  Received coordinates: Az=");
             Serial.print(sGotoAzimuth);
             Serial.print(" Alt=");
             Serial.println(sGotoAltitude);
-           gGyroState.setAzCoord(sGotoAzimuth*10.0, sGotoAltitude*10.0);
-           Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false);
-           Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, false);           
+              //gGyroState.setAzCoord(sGotoAzimuth*10.0, sGotoAltitude*10.0);
+              //Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false); //reset cache
+              //Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, false);           
+            gNavigationState.remoteServe(-1, pos_set, sGotoAzimuth*10, sGotoAltitude*10);  
         }
         mpu.Execute();      
         gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);  
-        if ((millis()-gLastSentToStellarium)>100){
-          gLastSentToStellarium=millis();
-          sendPositionToStellarium(gGyroState.getAzCoordX()/10.0, gGyroState.getAzCoordY()/10.0);
-          Serial.print("|<-  Send coordinates: Az=");
-          Serial.print(gGyroState.getAzCoordX()/10.0);
-          Serial.print(" Alt=");
-          Serial.println(gGyroState.getAzCoordY()/10.0);          
-        }    
+        vXposition=gGyroState.getAzCoordX();
+        //vYposition=gGyroState.getAzCoordY();
+        vYposition=gGyroState.getSmoothAzCoordY();
+        
+
+        gLastSentToStellarium=millis();
+        sendPositionToStellarium(vXposition/10.0,vYposition/10.0);
+        Serial.print("|<-  Send coordinates: Az=");
+        Serial.print(vXposition/10.0);
+        Serial.print(" Alt=");
+        Serial.println(vYposition/10.0);          
     }
     
     if (gNavigationState.allowDisplayGyro()){
-        Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false);
-        Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, false);
+        Display1_IVC(vYposition, LEADING_ZERO, 4, 0, false);
+        Display2_IVC(vXposition, LEADING_ZERO, 4, 0, false);
     } else if (gGyroState.getFreeze()){
-        if (gCalibrationStartTime<gGyroState.getFreezeTimeStart()){
+/*        if (gCalibrationStartTime<gGyroState.getFreezeTimeStart()){
             gCalibrationStartTime=gGyroState.getFreezeTimeStart();
             gMotionDetection.CalibrateReset();
         }
@@ -765,6 +800,7 @@ void loop() {
             gMotionDetection.CalibrateReset();
             gCalibrationStartTime=millis();
         }
+*/        
     }
 
     if ((millis()-gGyroState.lastPrint)>1000){

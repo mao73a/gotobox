@@ -134,7 +134,11 @@ void Display1_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool 
         return;
     }
     //display1.showNumberDec(num, LEADING_ZERO, 4, 0);
-    display1.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);
+    if (num<-999){    
+        display1.showNumberDecEx(-999, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);//signalize (value too small)
+    } else {
+        display1.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);
+    }
     gDisplay1LastValue=num;
     gDisplay1LastShowDot=pShowDot;
 }
@@ -147,7 +151,11 @@ void Display2_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool 
     if (gDisplay2LastValue==num && gDisplay2LastShowDot==pShowDot){
         return;
     }
-    display2.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);
+    if (num<-999){
+        display2.showNumberDecEx(-999, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);//signalize (value too small)
+    } else {
+        display2.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);
+    }
     gDisplay2LastValue=num;
     gDisplay2LastShowDot=pShowDot;    
 }

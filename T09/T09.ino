@@ -644,6 +644,7 @@ class NavigationState{
                         vSetAzX = pParam1;
                         vSetAzY = pParam2;
                         buzzer(30);
+                        remoteServe(REMOTE_OK, remote_pressed);
                     }
                     if (pKey!=REMOTE_HASH && pKey!=REMOTE_ASTER){
                         display2.showNumberDec(vSetAzX, LEADING_ZERO, 4, 0);

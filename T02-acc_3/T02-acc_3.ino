@@ -1,7 +1,7 @@
 #include<Wire.h>
 
 
-const int MPU_addr=0x68;
+const int MPU_addr=0x69;
 int16_t AcX,AcY,AcZ,Tmp,GyX,GyY,GyZ;
 
 int minVal=265;

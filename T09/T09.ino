@@ -11,9 +11,11 @@
 #define DISPLAY1_DIO 9
 #define DISPLAY2_CLK 4
 #define DISPLAY2_DIO 5
-#define BUZZER_PIN 12
+//#define BUZZER_PIN 12
+#define BUZZER_PIN A0
 #define IRREC_PIN 7
-#define DIODE_PIN 6
+//#define DIODE_PIN 6
+#define DIODE_PIN A1
 #define LEADING_ZERO 1
 #define NUMERIC_ERROR 0x7FFF
 

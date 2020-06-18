@@ -79,7 +79,8 @@ const uint8_t napis_off[] = {
 
 TM1637Display display1 = TM1637Display(DISPLAY1_CLK, DISPLAY1_DIO);
 TM1637Display display2 = TM1637Display(DISPLAY2_CLK, DISPLAY2_DIO);
-MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
+//MPU6050 mpu (Wire, MPU6050_ADDRESS_HIGH); //ADO=5V!!!
+MPU6050 mpu (Wire); //ADO=5V!!!
 
 IRrecv irrecv(IRREC_PIN);
 

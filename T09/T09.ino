@@ -7,6 +7,10 @@
 #include "remote_decode.h"
 #include "AvgStd.h"
 
+#define enc_2A 2
+#define enc_2B 3
+long pulses_enc2  = 36000;    
+
 #define DISPLAY1_CLK 8
 #define DISPLAY1_DIO 9
 #define DISPLAY2_CLK 4
@@ -86,6 +90,8 @@ IRrecv irrecv(IRREC_PIN);
 
 unsigned long gProfilingStartTime;
 unsigned long gProfilingCount;
+volatile int gLastEncoded2 = 0;
+volatile long gEncoderValue2 = 0;
 
 void buzzer(int pCzas=1){
   digitalWrite(BUZZER_PIN,HIGH);
@@ -167,7 +173,6 @@ class MotionDetection {
     private:
         int16_t xStableMin, xStableMax, yStableMin, yStableMax;   
         int fMotionDetectionCounter=0;
-        unsigned long fTimer;
     public:
 
         AvgStd dataX;
@@ -244,28 +249,8 @@ class MotionDetection {
                 }
             }
             CalibrateCommit();
-
         }
 
-        boolean MotionDetected(int pCount){
-            boolean vThisMotionDetectionResult;
-            boolean vReturn;
-            mpu.UpdateRawGyro();
-            vThisMotionDetectionResult=! (mpu.GetRawGyroX()>=xStableMin &&  mpu.GetRawGyroX()<=xStableMax && 
-                                          mpu.GetRawGyroY()>=yStableMin &&  mpu.GetRawGyroY()<=yStableMax);
-            if (vThisMotionDetectionResult) {fMotionDetectionCounter++;}
-            else {fMotionDetectionCounter=0;}
-
-            return fMotionDetectionCounter>=pCount;
-        }    
-
-         unsigned long getTimer(){
-            return fTimer;
-         }
-         
-         void setTimer(unsigned long pTimer){
-            fTimer=pTimer;
-         }
 };
 
 
@@ -381,16 +366,16 @@ class GyroState {
     }
     
     float getSmoothAzCoordY(){
-        Serial.println("");
-        Serial.print("|   >>> getSmoothAzCoordY: ");
-        Serial.print(" fMovingAvgSum=");
-        Serial.print(fMovingAvgSum);
-        Serial.print(" fAzOffsetY=");
-        Serial.print(fAzOffsetY);
-        Serial.print(" fmovingAvgArr_Idx=");
-        Serial.print(fmovingAvgArr_Idx);
-        Serial.print(" Result=");
-        Serial.println(fMovingAvgSum/float(SMOOTHING_ARRAY_COUNT) + fAzOffsetY);
+        //Serial.println("");
+        //Serial.print("|   >>> getSmoothAzCoordY: ");
+        //Serial.print(" fMovingAvgSum=");
+        //Serial.print(fMovingAvgSum);
+        //Serial.print(" fAzOffsetY=");
+        //Serial.print(fAzOffsetY);
+        //Serial.print(" fmovingAvgArr_Idx=");
+        //Serial.print(fmovingAvgArr_Idx);
+        //Serial.print(" Result=");
+        //Serial.println(fMovingAvgSum/float(SMOOTHING_ARRAY_COUNT) + fAzOffsetY);
 
         return fMovingAvgSum/float(SMOOTHING_ARRAY_COUNT) + fAzOffsetY;
     }
@@ -745,13 +730,48 @@ class NavigationState{
 
 static NavigationState gNavigationState;
 
+void encoderSetup(){
+  pinMode(enc_2A, INPUT_PULLUP);
+  pinMode(enc_2B, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(enc_2A), encoder_interrupt_callback, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(enc_2B), encoder_interrupt_callback, CHANGE);    
+}
+
+void encoder_interrupt_callback() {
+  int encoded2 = (digitalRead(enc_2A) << 1) | digitalRead(enc_2B);
+  int sum  = (gLastEncoded2 << 2) | encoded2;
+
+  if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) gEncoderValue2 ++;
+  if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) gEncoderValue2 --;
+  gLastEncoded2 = encoded2;
+}
+
+float encoder_get_azimuth() {
+  long h_deg, h_min, h_seg, A_deg, A_min, A_seg;
+  long Az_tel_s;
+
+  if (gEncoderValue2 >= pulses_enc2 || gEncoderValue2 <= -pulses_enc2) {
+    gEncoderValue2 = 0;
+  }
+  int enc2 = gEncoderValue2 / 1500;
+  long encoder2_temp = gEncoderValue2 - (enc2 * 1500);
+  long map2 = enc2 * map(1500, 0, pulses_enc2, 0, 1296000);
+
+  Az_tel_s  = map2 + map (encoder2_temp, 0, pulses_enc2, 0, 1296000);
+
+  if (Az_tel_s < 0) Az_tel_s = 1296000 + Az_tel_s;
+  if (Az_tel_s >= 1296000) Az_tel_s = Az_tel_s - 1296000 ;
+  return Az_tel_s/ 360.0;
+}
+
 
 void setup() {
   int i;
   display1.clear();
   display2.clear();
   gGyroState.init();
-  
+
+ 
   // Initialization
   mpu.Initialize();
 
@@ -766,23 +786,6 @@ void setup() {
   display1.setBrightness(gNavigationState.fBrightness);
   display2.setBrightness(gNavigationState.fBrightness);
 
-  /*
-  display1.clear();
-  display2.clear();
-  display1.setSegments(napis_CAL);
-  display2.setSegments(napis_CAL);
-  Serial.println("=====================================");
-  Serial.println("Starting calibration...");
-  mpu.Calibrate();
-  Serial.println("Calibration complete!");
-  Serial.println("Offsets:");
-  Serial.print("GyroX Offset = ");
-  Serial.println(mpu.GetGyroXOffset());
-  Serial.print("GyroY Offset = ");
-  Serial.println(mpu.GetGyroYOffset());
-  Serial.print("GyroZ Offset = ");
-  Serial.println(mpu.GetGyroZOffset());
-  */
 
  //c
   Serial.println("MotionDetection initialize...");
@@ -790,8 +793,8 @@ void setup() {
   display1.clear();
   display2.clear();
   gGyroState.setAzCoord(0,0);
+  encoderSetup();    
   gProfilingStartTime=millis();
-  gMotionDetection.setTimer(millis());
 }
 
 
@@ -802,7 +805,6 @@ unsigned long gLastSentToStellarium=0;
 
 void loop() {
     decode_results vIRResults;
-    boolean vMotionDetected=false;
     int vTimeToFreeze=0;
     int vMenuState;
     float sGotoAzimuth;
@@ -814,7 +816,6 @@ void loop() {
     {
         gNavigationState.remoteServe(remoteDecode(vIRResults), remote_pressed);
         irrecv.resume();
-        gMotionDetection.setTimer(millis());
         Serial.print("MENU STATE: ");
         Serial.print(vMenuState);
         Serial.print(" -> ");
@@ -822,7 +823,7 @@ void loop() {
         delay(100);
     }
 
-     if ((millis()-gLastSentToStellarium)>100){
+     if ((millis()-gLastSentToStellarium)>10){
         if (RS_service(sGotoAzimuth, sGotoAltitude)){
             Serial.print("|->  Received coordinates: Az=");
             Serial.print(sGotoAzimuth);
@@ -834,7 +835,10 @@ void loop() {
             gNavigationState.remoteServe(-1, pos_set, sGotoAzimuth*10, sGotoAltitude*10);  
         }
         mpu.Execute();      
-        gGyroState.setGyroCoord(-mpu.GetAngZ()*10, mpu.GetAngX()*10);  
+        gGyroState.setGyroCoord(
+                //-mpu.GetAngZ()*10,
+                encoder_get_azimuth(),
+                -mpu.GetAngX()*10);  
         vXposition=gGyroState.getAzCoordX();
         //vYposition=gGyroState.getAzCoordY();
         vYposition=gGyroState.getSmoothAzCoordY();
@@ -842,10 +846,10 @@ void loop() {
 
         gLastSentToStellarium=millis();
         sendPositionToStellarium(vXposition/10.0,vYposition/10.0);
-        Serial.print("|<-  Send coordinates: Az=");
-        Serial.print(vXposition/10.0);
-        Serial.print(" Alt=");
-        Serial.println(vYposition/10.0);     
+        //Serial.print("|<-  Send coordinates: Az=");
+        //Serial.print(vXposition/10.0);
+        //Serial.print(" Alt=");
+        //Serial.println(vYposition/10.0);     
 
         if(gNavigationState.DisplayGyroMode()==relative){
             blinkRedDiode(500);

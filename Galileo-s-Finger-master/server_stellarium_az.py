@@ -9,14 +9,41 @@ import errno
 import ephem
 import sys
 import datetime
+import argparse
 
-M_PI =  3.1415926535897932385
+parser = argparse.ArgumentParser()
+parser.add_argument("-s", "--serial", default='COM3', help="Serial port, ex COM1")
+parser.add_argument("-lat", "--latitude",  help="Observer  latitude in decimal format, ex 49.879399")
+parser.add_argument("-lon", "--longitude", help="Observer longitude in decimal format, ex 20.114111")
+parser.add_argument("-ele", "--elevation", help="Observer elevation in meters, ex 123")
+parser.add_argument("-epo", "--epoch",  help="Year, ex 2020")
+parser.add_argument("-v", "--verbose",  help="Verbose mode")
+args = parser.parse_args()
 
 home = ephem.Observer()
 home.date = datetime.datetime.utcnow()
+home.epoch =str(datetime.datetime.now().year) # '2020'
 home.lat, home.lon ='50.014111','19.873399'
 home.elevation = 219
-home.epoch = '2020'
+
+
+if  args.longitude:
+   home.lon =  args.longitude
+if  args.latitude:
+   home.lat =  args.latitude
+if args.elevation:
+   home.elevation =  int(args.elevation)
+if args.epoch:
+   home.epoch =  args.epoch
+
+print("Serial port="+ args.serial)   
+print("Longitude="+ str(home.lon))
+print("Latitude="+  str(home.lat))
+print("Elevation="+ str(round(home.elevation))+"m")
+print("Epoch="+ str(home.epoch)+"\n")
+
+
+M_PI =  3.1415926535897932385
 
 #na dzien (Spika)
 ephemra = '13:26:17.26'
@@ -24,10 +51,10 @@ ephemdec = '-11:16:07.9'
 #star = ephem.Equatorial(ephemra, ephemdec, epoch=home.epoch) #https://rhodesmill.org/pyephem/
 body = ephem.FixedBody()
 
-
+print("Connecting to serial port "+args.serial)     
 try:
     ser = serial.Serial(
-            port='COM5',
+            port=args.serial,
             baudrate = 115200,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
@@ -39,8 +66,8 @@ except serial.SerialException as e:
     print (e)
     sys.exit(1)
       
-      
-      
+time.sleep(5)      
+print("Serial port connected.\n")      
       
 def angleToDecimal(pAngle):
     return float(repr(pAngle))/M_PI*180.0
@@ -69,8 +96,10 @@ def arduinoToStellarium(pAzimuth, pAltitude):
     s = str(home.radec_of(float(ephem.degrees(pAzimuth)), float(ephem.degrees(pAltitude))))
     home.date = datetime.datetime.utcnow()
     pos = home.radec_of(float(ephem.degrees(str(pAzimuth))), float(ephem.degrees(str(pAltitude))))
-    print('arduinoToStellarium Az/pAltitude: '+str(pAzimuth)+' / '+str(pAltitude))
-    print('arduinoToStellarium Ra/Dec: '+str(pos[0])+' / '+str(pos[1]))
+    if args.verbose:
+        print('arduinoToStellarium Az/pAltitude: '+str(pAzimuth)+' / '+str(pAltitude))
+        print('arduinoToStellarium Ra/Dec: '+str(pos[0])+' / '+str(pos[1]))
+
     #print(float(pos[0])*180/M_PI)
     #print(float(pos[1])*180/M_PI)
     return angleToStellarium(pos[0]), angleToStellarium(pos[1])
@@ -84,15 +113,19 @@ def arduionoEncodeAz(pAz):
 
 def serialSendAltAzToArduino(pAz, pAlt):
     #send position to telescope
-    print('serialSendAltAzToArduino: '+str(pAz)+', '+str(pAlt))
+    if args.verbose:
+        print('serialSendAltAzToArduino: '+str(pAz)+', '+str(pAlt))
+
     x=int(arduionoEncodeAz(pAz))
     y=int(arduionoEncodeAlt(pAlt))
-    print('encoded: '+str(x)+',   '+str(y))
+    if args.verbose:    
+        print('encoded: '+str(x)+',   '+str(y))
     ser.write(b'goto')
     ser.write(arduionoEncodeAz(pAz).to_bytes(2,'big'))
     ser.write(arduionoEncodeAlt(pAlt).to_bytes(2,'big'))
     ser.write(b'.')
-    print("Coordinates sent to telescope:"+str(pAz)+", "+str(pAlt))
+    if args.verbose:    
+        print("Coordinates sent to telescope:"+str(pAz)+", "+str(pAlt))
 
     
       
@@ -121,53 +154,14 @@ listening_socket.listen(5)
 
 current_position = []
 
-    
-def printit(ra_int, dec_int):
-    h = ra_int
-    d = floor(0.5 + dec_int*(360*3600*1000/4294967296.0));
-    dec_sign = ''
-    if d >= 0:
-        if d > 90*3600*1000:
-            d =  180*3600*1000 - d;
-            h += 0x80000000;
-        dec_sign = '+';
-    else:
-        if d < -90*3600*1000:
-            d = -180*3600*1000 - d;
-            h += 0x80000000;
-        d = -d;
-        dec_sign = '-';
-    
-    
-    h = floor(0.5+h*(24*3600*10000/4294967296.0));
-    ra_ms = h % 10000; h /= 10000;
-    ra_s = h % 60; h /= 60;
-    ra_m = h % 60; h /= 60;
-    
-    h %= 24;
-    dec_ms = d % 1000; d /= 1000;
-    dec_s = d % 60; d /= 60;
-    dec_m = d % 60; d /= 60;
-
-    print ("ra =", h,"h", ra_m,"m",ra_s,".",ra_ms)
-    print ("dec =",dec_sign, d,"d", dec_m,"m",dec_s,".",dec_ms)
-
-    ephemra = str(trunc(h)) +':'+ str(trunc(ra_m)) +':'+ str(trunc(ra_s)) +'.'+ str(trunc(ra_ms))
-    ephemdec = str(dec_sign) + str(trunc(d)) +':'+ str(trunc(dec_m)) +':'+ str(trunc(dec_s)) +'.'+ str(trunc(dec_ms))
-    
-    
-    #print("ra =", h,"h", ra_m,"m",ra_s,".",ra_ms, sep=" ")
-    #print("dec =",dec_sign, d,"d", dec_m,"m",dec_s,".",dec_ms)
-    #print("ephemra =" + ephemra)
-    #print("ephemdec =" +ephemdec)
-    
+   
 
 
 tele_Az=0
 tele_Al=0
 while True:
     # Waits for I/O being available for reading from any socket object.
-    print("Waiting for Stellarium to connect...\n")    
+    print("Waiting for Stellarium to connect to localhost:10001...\n")    
     rlist, wlist, xlist = select.select( [listening_socket] + open_sockets, [], [] )
     print("Stellarium connected.\n")
     for i in rlist:
@@ -177,10 +171,11 @@ while True:
             open_sockets.append(new_socket)
         else:
             while True:        
-
+                
                 tele = ser.readline() #wait(timeout)
                 if (tele!=b''):
-                    print(tele)
+                    if args.verbose:
+                        print(tele)
                     if tele[0:5]==b'AZAL:':
                        #data received from Arduiono; send them to Stellarium 
                        sep=tele.find(b',')
@@ -191,7 +186,8 @@ while True:
                        i.send(reply)
                        i.send(reply)
                        #i.send(reply)
-                       print('Data sent to Stellarium')
+                       if args.verbose:
+                            print('Data sent to Stellarium')
                        
                 #print("Waitng for telescope...");                       
                 try:
@@ -234,7 +230,7 @@ while True:
                             de_int=data[4]                                                
                             print ("desired pos ra, dec: ")                        
                             print ("RA=",ra_int, "DE=", de_int)                        
-                            #printit(data[3], data[4])
+
                             (x, y)= stellariumToArdiuno(data[3], data[4]) 
                             serialSendAltAzToArduino(x, y)
 

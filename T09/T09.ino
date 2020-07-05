@@ -23,13 +23,18 @@ long pulses_enc2  = 36000;
 #define LEADING_ZERO 1
 #define NUMERIC_ERROR 0x7FFF
 
+#define SEND_STELLARIUM_PERIOD_MS 100//every X millis
+#define READ_MPU_PERIOD_MS 10//every X millis
+#define SMOOTHING_ARRAY_COUNT 10
+
+//currently not used
 #define AUTOFREEZE_TIME_ENABLE 10000 //millis
 #define AUTOFREEZE_TIME_CORRECTING_DRIFT 30 //seconds
 #define AUTOFREEZE_MOTION_DETECTION_SIGMA 7
 #define AUTOFREEZE_MOTION_DETECTION_COUNT 3
 #define AUTOCALLIBRATION_TIME 4000 //millis
 
-#define SMOOTHING_ARRAY_COUNT 10
+
 
 //
 //      A
@@ -135,6 +140,7 @@ bool gDisplay1LastShowDot, gDisplay2LastShowDot;
 
 void Display1_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool pShowDot)
 {
+    bool vLeadingZero=leading_zero;    
     if (length==0 && pos==0){
         gDisplay1LastValue=9234;
         return;
@@ -142,17 +148,22 @@ void Display1_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool 
     if (gDisplay1LastValue==num && gDisplay1LastShowDot==pShowDot){
         return;
     }
+    if (num<0){
+        vLeadingZero=false;
+    }
+    
     //display1.showNumberDec(num, LEADING_ZERO, 4, 0);
     if (num<-999){    
-        display1.showNumberDecEx(-999, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);//signalize (value too small)
+        display1.showNumberDecEx(-999, pShowDot ? 0xffff : 0x0000, vLeadingZero, 4, 0);//signalize (value too small)
     } else {
-        display1.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);
+        display1.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, vLeadingZero, 4, 0);
     }
     gDisplay1LastValue=num;
     gDisplay1LastShowDot=pShowDot;
 }
 void Display2_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool pShowDot)
 {
+    bool vLeadingZero=leading_zero;
     if (length==0 && pos==0){
         gDisplay2LastValue=9234;
         return;
@@ -160,10 +171,14 @@ void Display2_IVC(int num, bool leading_zero, uint8_t length, uint8_t pos, bool 
     if (gDisplay2LastValue==num && gDisplay2LastShowDot==pShowDot){
         return;
     }
+    if (num<0){
+        vLeadingZero=false;
+    }
+    
     if (num<-999){
-        display2.showNumberDecEx(-999, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);//signalize (value too small)
+        display2.showNumberDecEx(-999, pShowDot ? 0xffff : 0x0000, vLeadingZero, 4, 0);//signalize (value too small)
     } else {
-        display2.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, leading_zero, 4, 0);
+        display2.showNumberDecEx(num, pShowDot ? 0xffff : 0x0000, vLeadingZero, 4, 0);
     }
     gDisplay2LastValue=num;
     gDisplay2LastShowDot=pShowDot;    
@@ -237,7 +252,7 @@ class MotionDetection {
             int j=pIterations/vProgresDiv;
             display2.setSegments(napis_CAL);
             display1.setSegments(napis_CAL);
-            delay(1000);
+            delay(2000);
             dataX.reset(); dataY.reset(); dataZ.reset();
             for(int i=0;i<pIterations;i++){
                 mpu.UpdateRawGyro();
@@ -245,7 +260,7 @@ class MotionDetection {
                 dataY.checkAndAddReading(mpu.GetRawGyroY());
                 dataZ.checkAndAddReading(mpu.GetRawGyroZ());
                 if (i%vProgresDiv==0){
-                    display1.showNumberDec(--j);
+                    display1.showNumberDec(j--);
                 }
             }
             CalibrateCommit();
@@ -451,7 +466,7 @@ void sendPositionToStellarium(float pAz, float pAl){
    //unsigned vAz=round(pAz*10);
    //int vAl=round(pAl*10);
    Serial.print("AZAL:");
-   Serial.print(round(pAz*10.0)/10.0);    
+   Serial.print(round(pAz*100.0)/100.0);    
    Serial.print(",");
    Serial.println(round(pAl*100.0)/100.0); 
 }
@@ -801,6 +816,7 @@ void setup() {
 
 unsigned long gCalibrationStartTime;
 unsigned long gLastSentToStellarium=0;
+unsigned long gLastPositionRead=0;
 
 
 void loop() {
@@ -823,7 +839,8 @@ void loop() {
         delay(100);
     }
 
-     if ((millis()-gLastSentToStellarium)>10){
+     if ((millis()-gLastPositionRead)>READ_MPU_PERIOD_MS){
+        gLastPositionRead=millis();    
         if (RS_service(sGotoAzimuth, sGotoAltitude)){
             Serial.print("|->  Received coordinates: Az=");
             Serial.print(sGotoAzimuth);
@@ -843,9 +860,6 @@ void loop() {
         //vYposition=gGyroState.getAzCoordY();
         vYposition=gGyroState.getSmoothAzCoordY();
         
-
-        gLastSentToStellarium=millis();
-        sendPositionToStellarium(vXposition/10.0,vYposition/10.0);
         //Serial.print("|<-  Send coordinates: Az=");
         //Serial.print(vXposition/10.0);
         //Serial.print(" Alt=");
@@ -856,6 +870,11 @@ void loop() {
         }
     }
     
+    if ((millis()-gLastSentToStellarium)>SEND_STELLARIUM_PERIOD_MS){
+        sendPositionToStellarium(vXposition/10.0,vYposition/10.0);
+        gLastSentToStellarium=millis();            
+    }
+    
     if (gNavigationState.DisplayGyroMode()==absolute){
         Display1_IVC(vYposition, LEADING_ZERO, 4, 0, false);
         Display2_IVC(vXposition, LEADING_ZERO, 4, 0, false);
@@ -864,7 +883,7 @@ void loop() {
         Display2_IVC(gGyroState.getRelativeCoordX(), 0, 4, 0, false);        
     } 
 
-    if ((millis()-gGyroState.lastPrint)>1000){
+    if ((millis()-gGyroState.lastPrint)>10000){
         gGyroState.lastPrint=millis();
 
 

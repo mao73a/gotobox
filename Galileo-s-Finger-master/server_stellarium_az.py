@@ -59,6 +59,7 @@ try:
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
             bytesize=serial.EIGHTBITS,
+            dsrdtr=False,
             timeout=2
           )
 except serial.SerialException as e:

@@ -9,7 +9,7 @@
 
 #define enc_2A 2
 #define enc_2B 3
-long pulses_enc2  = 36000;    
+long pulses_enc2  = 33600; //600*(280/20)*4 - Data: gears: large:280 teeth, small:20 teeth, implustaror: 600 impluses 
 
 #define DISPLAY1_CLK 8
 #define DISPLAY1_DIO 9

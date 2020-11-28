@@ -24,7 +24,8 @@ long pulses_enc2  = 33600; //600*(280/20)*4 - Data: gears: large:280 teeth, smal
 #define NUMERIC_ERROR 0x7FFF
 
 #define SEND_STELLARIUM_PERIOD_MS 100//every X millis
-#define READ_MPU_PERIOD_MS 10//every X millis
+#define READ_MPU_PERIOD_MS 50//every X millis
+#define DISPLAY_COORDINATES_PERIOD_MS 50
 #define SMOOTHING_ARRAY_COUNT 10
 
 //currently not used
@@ -764,7 +765,8 @@ void encoder_interrupt_callback() {
 float encoder_get_azimuth() {
   long h_deg, h_min, h_seg, A_deg, A_min, A_seg;
   long Az_tel_s;
-
+  float result;
+/*
   if (gEncoderValue2 >= pulses_enc2 || gEncoderValue2 <= -pulses_enc2) {
     gEncoderValue2 = 0;
   }
@@ -777,6 +779,15 @@ float encoder_get_azimuth() {
   if (Az_tel_s < 0) Az_tel_s = 1296000 + Az_tel_s;
   if (Az_tel_s >= 1296000) Az_tel_s = Az_tel_s - 1296000 ;
   return Az_tel_s/ 360.0;
+  */
+  if (gEncoderValue2<0){
+       gEncoderValue2+=pulses_enc2;
+  }
+  if (gEncoderValue2>=pulses_enc2){
+       gEncoderValue2-=pulses_enc2;
+  }
+  result = map(gEncoderValue2, 0, pulses_enc2, 0, 3600);
+  return result;
 }
 
 
@@ -817,6 +828,7 @@ void setup() {
 unsigned long gCalibrationStartTime;
 unsigned long gLastSentToStellarium=0;
 unsigned long gLastPositionRead=0;
+unsigned long gLastDisplayCoordinatesTime=0;
 
 
 void loop() {
@@ -875,13 +887,16 @@ void loop() {
         gLastSentToStellarium=millis();            
     }
     
-    if (gNavigationState.DisplayGyroMode()==absolute){
-        Display1_IVC(vYposition, LEADING_ZERO, 4, 0, false);
-        Display2_IVC(vXposition, LEADING_ZERO, 4, 0, false);
-    } else if (gNavigationState.DisplayGyroMode()==relative){
-        Display1_IVC(gGyroState.getRelativeCoordY(), 0, 4, 0, false);
-        Display2_IVC(gGyroState.getRelativeCoordX(), 0, 4, 0, false);        
-    } 
+    if ((millis()-gLastDisplayCoordinatesTime)>DISPLAY_COORDINATES_PERIOD_MS){
+        if (gNavigationState.DisplayGyroMode()==absolute){
+            Display1_IVC(vYposition, LEADING_ZERO, 4, 0, false);
+            Display2_IVC(vXposition, LEADING_ZERO, 4, 0, false);
+        } else if (gNavigationState.DisplayGyroMode()==relative){
+            Display1_IVC(gGyroState.getRelativeCoordY(), 0, 4, 0, false);
+            Display2_IVC(gGyroState.getRelativeCoordX(), 0, 4, 0, false);        
+        } 
+       gLastDisplayCoordinatesTime=millis();        
+    }
 
     if ((millis()-gGyroState.lastPrint)>10000){
         gGyroState.lastPrint=millis();

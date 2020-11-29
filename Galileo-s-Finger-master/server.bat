@@ -1,1 +1,2 @@
-C:\Users\telewidz\AppData\Local\Programs\Python\Python38-32\python.exe -u server_stellarium_az.py -s COM3 -lat 50.014111 -lon 19.873399 -ele 219 -epo 2020
+rem python.exe -u server_stellarium_az.py -s COM3 -lat 50.014111 -lon 19.873399 -ele 219 -epo 2020
+dist\server_stellarium_az.exe -s COM3 -lat 50.014111 -lon 19.873399 -ele 219 -epo 2020

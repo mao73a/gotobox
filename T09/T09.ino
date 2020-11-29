@@ -26,7 +26,7 @@ long pulses_enc2  = 33600; //600*(280/20)*4 - Data: gears: large:280 teeth, smal
 #define SEND_STELLARIUM_PERIOD_MS 100//every X millis
 #define READ_MPU_PERIOD_MS 50//every X millis
 #define DISPLAY_COORDINATES_PERIOD_MS 50
-#define SMOOTHING_ARRAY_COUNT 10
+#define SMOOTHING_ARRAY_COUNT 20
 
 //currently not used
 #define AUTOFREEZE_TIME_ENABLE 10000 //millis
@@ -135,6 +135,7 @@ float makeNumber360(float pNum){
     }
     return newPos;
 }
+
 
 int gDisplay1LastValue=1234, gDisplay2LastValue=1234;
 bool gDisplay1LastShowDot, gDisplay2LastShowDot;
@@ -454,8 +455,8 @@ int RS_service(float &pAzimuth, float &pAltitude)
      }
      else if (gInputState == 8 && char(incomingByte) == '.') {
        gInputState=0;
-       pAzimuth = gOdczytInteger01*360.0/65535.0;
-       pAltitude= (gOdczytInteger02*180.0/65535.0-90.0);
+       pAzimuth = gOdczytInteger01*360.0/65536.0;
+       pAltitude= (gOdczytInteger02*180.0/65536.0-90.0);
        return 1; //sygnal odebrany - mozna go przetwarzac w glownej petli       
      }
    
@@ -601,7 +602,7 @@ class NavigationState{
                     Display2_IVC(0, LEADING_ZERO, 0, 0, false);                                
                     break;
                 case home_relative:
-                    if (pKey==REMOTE_ASTER){
+                    if (pKey==REMOTE_ASTER || pKey==REMOTE_OK){
                         fMenuState=home;
                         Display1_IVC(0, LEADING_ZERO, 0, 0, false);//reset display
                         Display2_IVC(0, LEADING_ZERO, 0, 0, false);                            
@@ -645,8 +646,8 @@ class NavigationState{
                         vEnteredAzY = vSetAzY;
                         showPrompt(display2, 0);
                     } else if (pForcedState==pos_set){
-                        vSetAzX = pParam1;
-                        vSetAzY = pParam2;
+                        vSetAzX = round(pParam1);
+                        vSetAzY = round(pParam2);
                         buzzer(30);
                         remoteServe(REMOTE_OK, remote_pressed);
                     }
@@ -763,30 +764,15 @@ void encoder_interrupt_callback() {
 }
 
 float encoder_get_azimuth() {
-  long h_deg, h_min, h_seg, A_deg, A_min, A_seg;
-  long Az_tel_s;
   float result;
-/*
-  if (gEncoderValue2 >= pulses_enc2 || gEncoderValue2 <= -pulses_enc2) {
-    gEncoderValue2 = 0;
-  }
-  int enc2 = gEncoderValue2 / 1500;
-  long encoder2_temp = gEncoderValue2 - (enc2 * 1500);
-  long map2 = enc2 * map(1500, 0, pulses_enc2, 0, 1296000);
 
-  Az_tel_s  = map2 + map (encoder2_temp, 0, pulses_enc2, 0, 1296000);
-
-  if (Az_tel_s < 0) Az_tel_s = 1296000 + Az_tel_s;
-  if (Az_tel_s >= 1296000) Az_tel_s = Az_tel_s - 1296000 ;
-  return Az_tel_s/ 360.0;
-  */
   if (gEncoderValue2<0){
        gEncoderValue2+=pulses_enc2;
   }
   if (gEncoderValue2>=pulses_enc2){
        gEncoderValue2-=pulses_enc2;
   }
-  result = map(gEncoderValue2, 0, pulses_enc2, 0, 3600);
+  result = map(gEncoderValue2, 0, pulses_enc2, 0, 36000)/10.0;
   return result;
 }
 
@@ -814,7 +800,6 @@ void setup() {
 
 
  //c
-  Serial.println("MotionDetection initialize...");
   gMotionDetection.Calibrate(2000);
   display1.clear();
   display2.clear();
@@ -889,11 +874,11 @@ void loop() {
     
     if ((millis()-gLastDisplayCoordinatesTime)>DISPLAY_COORDINATES_PERIOD_MS){
         if (gNavigationState.DisplayGyroMode()==absolute){
-            Display1_IVC(vYposition, LEADING_ZERO, 4, 0, false);
-            Display2_IVC(vXposition, LEADING_ZERO, 4, 0, false);
+            Display1_IVC(makeNumber360(round(vYposition)), LEADING_ZERO, 4, 0, false);
+            Display2_IVC(makeNumber360(round(vXposition)), LEADING_ZERO, 4, 0, false);
         } else if (gNavigationState.DisplayGyroMode()==relative){
-            Display1_IVC(gGyroState.getRelativeCoordY(), 0, 4, 0, false);
-            Display2_IVC(gGyroState.getRelativeCoordX(), 0, 4, 0, false);        
+            Display1_IVC(round(gGyroState.getRelativeCoordY()), 0, 4, 0, false);
+            Display2_IVC(round(gGyroState.getRelativeCoordX()), 0, 4, 0, false);        
         } 
        gLastDisplayCoordinatesTime=millis();        
     }

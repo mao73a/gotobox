@@ -1,0 +1,1 @@
+pyinstaller -F server_stellarium_az.py

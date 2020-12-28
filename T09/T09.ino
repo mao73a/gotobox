@@ -136,6 +136,17 @@ float makeNumber360(float pNum){
     return newPos;
 }
 
+float makeNumber180(float pNum){
+    float newPos=pNum;
+    while(newPos<-1800.0){
+      newPos+=3600.0;
+    }
+    while(newPos>=1800.0){
+      newPos-=3600.0;
+    }
+    return newPos;
+}
+
 
 int gDisplay1LastValue=1234, gDisplay2LastValue=1234;
 bool gDisplay1LastShowDot, gDisplay2LastShowDot;
@@ -459,6 +470,10 @@ int RS_service(float &pAzimuth, float &pAltitude)
        pAltitude= (gOdczytInteger02*180.0/65536.0-90.0);
        return 1; //sygnal odebrany - mozna go przetwarzac w glownej petli       
      }
+     else if (gInputState == 8 && char(incomingByte) == '*') {
+       gInputState=0;
+       return 2; //sygnal odebrany - mozna go przetwarzac w glownej petli       
+     }     
    
   }
   return 0;
@@ -820,6 +835,7 @@ void loop() {
     decode_results vIRResults;
     int vTimeToFreeze=0;
     int vMenuState;
+    int vRSserviceResult;
     float sGotoAzimuth;
     float sGotoAltitude;    
     float vXposition, vYposition;
@@ -838,7 +854,8 @@ void loop() {
 
      if ((millis()-gLastPositionRead)>READ_MPU_PERIOD_MS){
         gLastPositionRead=millis();    
-        if (RS_service(sGotoAzimuth, sGotoAltitude)){
+        vRSserviceResult = RS_service(sGotoAzimuth, sGotoAltitude);
+        if (vRSserviceResult==1){
             Serial.print("|->  Received coordinates: Az=");
             Serial.print(sGotoAzimuth);
             Serial.print(" Alt=");
@@ -847,6 +864,9 @@ void loop() {
               //Display1_IVC(gGyroState.getAzCoordY(), LEADING_ZERO, 4, 0, false); //reset cache
               //Display2_IVC(gGyroState.getAzCoordX(), LEADING_ZERO, 4, 0, false);           
             gNavigationState.remoteServe(-1, pos_set, sGotoAzimuth*10, sGotoAltitude*10);  
+        } else if (vRSserviceResult==2){
+            Serial.print("|->  Received mode switch.");
+            gNavigationState.remoteServe(REMOTE_ASTER, remote_pressed);
         }
         mpu.Execute();      
         gGyroState.setGyroCoord(
@@ -874,11 +894,11 @@ void loop() {
     
     if ((millis()-gLastDisplayCoordinatesTime)>DISPLAY_COORDINATES_PERIOD_MS){
         if (gNavigationState.DisplayGyroMode()==absolute){
-            Display1_IVC(makeNumber360(round(vYposition)), LEADING_ZERO, 4, 0, false);
+            Display1_IVC(makeNumber180(round(vYposition)), LEADING_ZERO, 4, 0, false);
             Display2_IVC(makeNumber360(round(vXposition)), LEADING_ZERO, 4, 0, false);
         } else if (gNavigationState.DisplayGyroMode()==relative){
-            Display1_IVC(round(gGyroState.getRelativeCoordY()), 0, 4, 0, false);
-            Display2_IVC(round(gGyroState.getRelativeCoordX()), 0, 4, 0, false);        
+            Display1_IVC(makeNumber180(round(gGyroState.getRelativeCoordY())), 0, 4, 0, false);
+            Display2_IVC(makeNumber180(round(gGyroState.getRelativeCoordX())), 0, 4, 0, false);        
         } 
        gLastDisplayCoordinatesTime=millis();        
     }

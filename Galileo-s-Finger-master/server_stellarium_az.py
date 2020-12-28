@@ -11,6 +11,7 @@ import ephem  #requires MS Visual C++ 14 (6GB Install!)
 import sys
 import datetime
 import argparse
+import keyboard
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-s", "--serial", default='COM1', help="Serial port name (COM1, COM2, COM3, etc). You need to install CH340 driver for Arduino to see USB port as Serial port. Default: COM1")
@@ -75,6 +76,7 @@ except serial.SerialException as e:
       
 time.sleep(5)      
 print("Serial port connected.\n")      
+
       
 def angleToDecimal(pAngle):
     return float(repr(pAngle))/M_PI*180.0
@@ -133,7 +135,15 @@ def serialSendAltAzToArduino(pAz, pAlt):
     if args.verbose:    
         print("Coordinates sent to telescope:"+str(pAz)+", "+str(pAlt))
 
-    
+def serialSendInputModeOnOff():  
+    x=int(0);
+    ser.write(b'goto')
+    ser.write(arduionoEncodeAz(x).to_bytes(2,'big'))
+    ser.write(arduionoEncodeAlt(x).to_bytes(2,'big'))
+    ser.write(b'*')
+    time.sleep(0.5)      
+    if args.verbose:    
+        print("Mode switch sent to telescope.")
       
 # List of socket objects that are currently open
 open_sockets = []
@@ -170,19 +180,22 @@ while True:
         print("Stellarium connected.\n")
          
         for i in rlist:
+                       
             if i is listening_socket:
                 print("Accepting connection.\n")
                 new_socket, addr = listening_socket.accept()
                 open_sockets.append(new_socket)
             else:
                 while True:        
-                    
+                    if keyboard.is_pressed('f8'):                            
+                        serialSendInputModeOnOff();            
+                        
                     tele = ser.readline() #wait(timeout)
                     if (tele!=b''):
                         if args.verbose:
                             print(tele)
                         if tele[0:5]==b'AZAL:':
-                           #data received from Arduiono; send them to Stellarium 
+                           #data received from Arduino; send them to Stellarium 
                            sep=tele.find(b',')
                            tele_Az=float(tele[5:sep].decode('cp1250'))
                            tele_Al=float(tele[sep+1:].decode('cp1250'))
@@ -237,6 +250,9 @@ while True:
                                 print ("  ALT=",x, "LON=", y)     
                                 serialSendAltAzToArduino(x, y)
                                 print ("  Coorinates sent to telecope.") 
+                                
+
+                        
     except SystemExit:
         print("Program terminated.")
         sys.exit(1)
